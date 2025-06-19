@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  firstName    String
+  lastName     String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("parent")
+  createdAt    DateTime @default(now())
+
+  // Relations
+  sentMessages        Message[]             @relation("SentMessages")
+  receivedMessages    Message[]             @relation("ReceivedMessages")
+  groupMemberships    UserGroupMembership[]
+  createdEvents       CalendarEvent[]       @relation("CreatedEvents")
+  eventParticipations EventParticipant[]
+  auditLogs           AuditLog[]
+}
+
+model Message {
+  id      String         @id @default(uuid())
+  group   ParentingGroup @relation(fields: [groupId], references: [id])
+  groupId String
+
+  sender   User   @relation("SentMessages", fields: [senderId], references: [id])
+  senderId String
+
+  recipient   User?   @relation("ReceivedMessages", fields: [recipientId], references: [id])
+  recipientId String? // null if the message is to the whole group
+
+  content     String
+  messageType String   @default("text") // e.g., 'text', 'image', 'system'
+  sentAt      DateTime @default(now())
+  isRead      Boolean  @default(false)
+
+  @@index([groupId, sentAt])
+}
+
+model ParentingGroup {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  members  UserGroupMembership[]
+  messages Message[]
+  events   CalendarEvent[]
+}
+
+model UserGroupMembership {
+  userId  String
+  groupId String
+
+  user  User           @relation(fields: [userId], references: [id])
+  group ParentingGroup @relation(fields: [groupId], references: [id])
+
+  @@id([userId, groupId])
+}
+
+model CalendarEvent {
+  id      String         @id @default(uuid())
+  group   ParentingGroup @relation(fields: [groupId], references: [id])
+  groupId String
+
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  createdBy   User?    @relation("CreatedEvents", fields: [createdById], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  participants EventParticipant[]
+}
+
+model EventParticipant {
+  eventId String
+  userId  String
+
+  event CalendarEvent @relation(fields: [eventId], references: [id])
+  user  User          @relation(fields: [userId], references: [id])
+
+  @@id([eventId, userId])
+}
+
+model AuditLog {
+  id     String  @id @default(uuid())
+  user   User?   @relation(fields: [userId], references: [id])
+  userId String?
+
+  action     String // e.g. 'sent_message', 'created_event'
+  entityType String? // e.g. 'message', 'calendar_event'
+  entityId   String?
+  metadata   Json?
+  timestamp  DateTime @default(now())
+}
