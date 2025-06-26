@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user-dto';
 import { UserResponseDto } from './dto/user-response-dto';
@@ -49,11 +49,40 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
-    const user = await this.prisma.user.update({
+    const dataToUpdate: any = { ...dto };
+
+    if (dto.email) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+      });
+
+      if (existingUser && existingUser.id !== id) {
+        throw new BadRequestException('Email is already in use.');
+      }
+    }
+
+    if (dto.password) {
+      const hashed = await bcrypt.hash(dto.password, 10);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      dataToUpdate.passwordHash = hashed;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      delete dataToUpdate.password;
+    }
+
+    const updatedUser = await this.prisma.user.update({
       where: { id },
-      data: dto,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      data: dataToUpdate,
     });
-    return UserResponseDto(user);
+
+    return {
+      id: updatedUser.id,
+      firstName: updatedUser.firstName,
+      lastName: updatedUser.lastName,
+      email: updatedUser.email,
+      role: updatedUser.role,
+      createdAt: updatedUser.createdAt,
+    };
   }
 
   async delete(id: string): Promise<void> {
