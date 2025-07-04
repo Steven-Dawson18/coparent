@@ -4,14 +4,29 @@ services:
     restart: always
     container_name: coparent-db
     environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=prisma
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: prisma
     ports:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 
+  backend:
+    build:
+      context: ./coparent-backend
+      dockerfile: Dockerfile
+    container_name: coparent-backend
+    ports:
+      - "3000:3000"
+      - "5555:5555"
+    environment:
+      DATABASE_URL: postgresql://postgres:prisma@postgres:5432/postgres
+    depends_on:
+      - postgres
+    volumes:
+      - ./coparent-backend:/app
+    command: sh -c "npx prisma generate && npm run start:dev"
+
 volumes:
   pg_data:
-

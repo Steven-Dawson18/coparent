@@ -5,10 +5,17 @@ GET http://localhost:3000/users
 ### Create a new User
 POST http://localhost:3000/users
 Content-Type: application/json
-
 {
     "firstName": "Steve",
     "lastName": "Dawson",
+    "email": "sd@example.com",
+    "password": "password"
+}
+
+### User Login
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+{
     "email": "sd@example.com",
     "password": "password"
 }
