@@ -1,20 +1,15 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
+  @MinLength(1)
+  @MaxLength(100)
   firstName?: string;
 
   @IsOptional()
   @IsString()
+  @MinLength(1)
+  @MaxLength(100)
   lastName?: string;
-
-  @IsOptional()
-  @IsEmail()
-  email?: string;
-
-  @IsOptional()
-  @MinLength(6)
-  password?: string;
 }

@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -8,97 +8,949 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum FamilyRole {
+  OWNER
+  PARENT
+  PROFESSIONAL_READ_ONLY
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+  EXPIRED
+}
+
+enum EmailDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DELIVERED
+  RETRY
+  BOUNCED
+  DEAD
+}
+
+enum MessageCategory {
+  GENERAL
+  CHILD_ARRANGEMENTS
+  SCHOOL
+  HEALTH
+  MONEY
+  ACTIVITIES
+  HOLIDAY
+  IMPORTANT_DECISION
+}
+
+enum FamilyRequestType {
+  ARRANGEMENT_SWAP
+  HOLIDAY
+  SCHOOL
+  MEDICAL
+  ACTIVITY
+  PURCHASE
+  OTHER
+}
+
+enum FamilyRequestStatus {
+  OPEN
+  COUNTERED
+  ACCEPTED
+  DECLINED
+}
+
+enum RequestResponseType {
+  ACCEPT
+  DECLINE
+  COUNTER_PROPOSAL
+}
+
+enum CalendarEventCategory {
+  GENERAL
+  SCHOOL
+  MEDICAL
+  ACTIVITY
+  HANDOVER
+  HOLIDAY
+}
+
+enum CalendarEventState {
+  ACTIVE
+  CANCELLED
+}
+
+enum ArrangementFrequency {
+  WEEKLY
+  FORTNIGHTLY
+}
+
+enum ArrangementState {
+  ACTIVE
+  CANCELLED
+}
+
+enum ExpenseCategory {
+  SCHOOL
+  MEDICAL
+  ACTIVITY
+  CLOTHING
+  CHILDCARE
+  TRAVEL
+  FOOD
+  OTHER
+}
+
+enum ExpenseResponseType {
+  ACCEPT
+  DECLINE
+  DISPUTE
+}
+
+enum RecurringExpenseFrequency {
+  WEEKLY
+  MONTHLY
+  TERMLY
+  ANNUAL
+}
+
+enum HandoverState {
+  SCHEDULED
+  CANCELLED
+}
+
+enum HandoverOutcome {
+  COMPLETED
+  DELAYED
+  MISSED
+}
+
+enum DocumentCategory {
+  SCHOOL
+  MEDICAL
+  LEGAL
+  IDENTITY
+  RECEIPT
+  ACTIVITY
+  GENERAL
+}
+
+enum NotificationType {
+  NEW_MESSAGE
+  REQUEST_ACTION
+  EXPENSE_ACTION
+  HANDOVER_REMINDER
+  CALENDAR_REMINDER
+  DOCUMENT_ACTIVITY
+}
+
 model User {
   id           String   @id @default(uuid())
   firstName    String
   lastName     String
   email        String   @unique
   passwordHash String
-  role         String   @default("parent")
   createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  // Relations
-  sentMessages        Message[]             @relation("SentMessages")
-  receivedMessages    Message[]             @relation("ReceivedMessages")
-  groupMemberships    UserGroupMembership[]
-  createdEvents       CalendarEvent[]       @relation("CreatedEvents")
-  eventParticipations EventParticipant[]
-  auditLogs           AuditLog[]
+  memberships                 FamilyMembership[]
+  auditEvents                 AuditEvent[]                 @relation("AuditActor")
+  identities                  ExternalIdentity[]
+  sentInvitations             FamilyInvitation[]           @relation("InvitationSender")
+  resolvedInvitations         FamilyInvitation[]           @relation("InvitationResolver")
+  sentMessages                Message[]                    @relation("MessageSender")
+  messageReceipts             MessageReceipt[]
+  createdRequests             FamilyRequest[]              @relation("RequestCreator")
+  assignedRequests            FamilyRequest[]              @relation("RequestRespondent")
+  requestResponses            RequestResponse[]
+  createdCalendarEvents       CalendarEvent[]              @relation("CalendarEventCreator")
+  calendarVersions            CalendarEventVersion[]       @relation("CalendarVersionCreator")
+  responsibleCalendarVersions CalendarEventVersion[]       @relation("CalendarResponsibleParent")
+  createdArrangements         LivingArrangement[]          @relation("ArrangementCreator")
+  arrangementVersions         LivingArrangementVersion[]   @relation("ArrangementVersionCreator")
+  responsibleArrangements     LivingArrangementVersion[]   @relation("ArrangementResponsibleParent")
+  arrangementExceptions       LivingArrangementException[]
+  createdExpenses             Expense[]                    @relation("ExpenseCreator")
+  expenseVersions             ExpenseVersion[]             @relation("ExpenseVersionCreator")
+  paidExpenses                ExpenseVersion[]             @relation("ExpensePayer")
+  assignedExpenses            Expense[]                    @relation("ExpenseRespondent")
+  expenseAllocations          ExpenseAllocation[]
+  expenseResponses            ExpenseResponse[]
+  createdRecurringExpenses    RecurringExpense[]           @relation("RecurringExpenseCreator")
+  paidRecurringExpenses       RecurringExpense[]           @relation("RecurringExpensePayer")
+  recurringExpenseAllocations RecurringExpenseAllocation[]
+  createdMonthlyStatements    MonthlyExpenseStatement[]
+  createdHandovers            Handover[]                   @relation("HandoverCreator")
+  handoverVersions            HandoverVersion[]            @relation("HandoverVersionCreator")
+  handoversFrom               HandoverVersion[]            @relation("HandoverFromParent")
+  handoversTo                 HandoverVersion[]            @relation("HandoverToParent")
+  handoverAcknowledgements    HandoverAcknowledgement[]
+  createdDocuments            Document[]                   @relation("DocumentCreator")
+  documentVersions            DocumentVersion[]
+  notifications               Notification[]
+  notificationPreferences     NotificationPreference[]
 }
 
-model Message {
-  id      String         @id @default(uuid())
-  group   ParentingGroup @relation(fields: [groupId], references: [id])
-  groupId String
+model ExternalIdentity {
+  id             String   @id @default(uuid())
+  providerIssuer String
+  subject        String
+  userId         String
+  createdAt      DateTime @default(now())
 
-  sender   User   @relation("SentMessages", fields: [senderId], references: [id])
-  senderId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  recipient   User?   @relation("ReceivedMessages", fields: [recipientId], references: [id])
-  recipientId String? // null if the message is to the whole group
-
-  content     String
-  messageType String   @default("text") // e.g., 'text', 'image', 'system'
-  sentAt      DateTime @default(now())
-  isRead      Boolean  @default(false)
-
-  @@index([groupId, sentAt])
+  @@unique([providerIssuer, subject])
+  @@index([userId])
 }
 
-model ParentingGroup {
+model Family {
   id        String   @id @default(uuid())
   name      String
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  members  UserGroupMembership[]
-  messages Message[]
-  events   CalendarEvent[]
+  memberships        FamilyMembership[]
+  children           Child[]
+  auditEvents        AuditEvent[]
+  invitations        FamilyInvitation[]
+  messages           Message[]
+  requests           FamilyRequest[]
+  agreements         Agreement[]
+  calendarEvents     CalendarEvent[]
+  livingArrangements LivingArrangement[]
+  expenses           Expense[]
+  recurringExpenses  RecurringExpense[]
+  expenseStatements  MonthlyExpenseStatement[]
+  handovers          Handover[]
+  documents          Document[]
+  notifications      Notification[]
 }
 
-model UserGroupMembership {
-  userId  String
-  groupId String
+model FamilyInvitation {
+  id           String           @id @default(uuid())
+  familyId     String
+  email        String
+  role         FamilyRole
+  tokenHash    String           @unique
+  status       InvitationStatus @default(PENDING)
+  invitedById  String
+  resolvedById String?
+  createdAt    DateTime         @default(now())
+  expiresAt    DateTime
+  resolvedAt   DateTime?
 
-  user  User           @relation(fields: [userId], references: [id])
-  group ParentingGroup @relation(fields: [groupId], references: [id])
+  family        Family       @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  invitedBy     User         @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Restrict)
+  resolvedBy    User?        @relation("InvitationResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  emailDelivery EmailOutbox?
 
-  @@id([userId, groupId])
+  @@index([familyId, status])
+  @@index([email, status])
+}
+
+model EmailOutbox {
+  id                   String              @id
+  invitationId         String              @unique
+  status               EmailDeliveryStatus @default(PENDING)
+  ciphertext           String
+  initializationVector String
+  authenticationTag    String
+  keyVersion           Int                 @default(1)
+  attempts             Int                 @default(0)
+  nextAttemptAt        DateTime            @default(now())
+  lockedAt             DateTime?
+  sentAt               DateTime?
+  deliveredAt          DateTime?
+  providerMessageId    String?             @unique
+  lastErrorCode        String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  invitation FamilyInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+}
+
+model FamilyMembership {
+  familyId String
+  userId   String
+  role     FamilyRole
+  joinedAt DateTime   @default(now())
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([familyId, userId])
+  @@index([userId])
+}
+
+/// Messages and their child links are immutable after creation. Database
+/// triggers enforce this even for privileged application connections.
+model Message {
+  id        String          @id
+  familyId  String
+  senderId  String
+  category  MessageCategory @default(GENERAL)
+  body      String
+  createdAt DateTime        @default(now())
+
+  family      Family            @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  sender      User              @relation("MessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+  children    MessageChild[]
+  receipts    MessageReceipt[]
+  attachments DocumentMessage[]
+
+  @@index([familyId, createdAt, id])
+  @@index([senderId, createdAt])
+}
+
+model MessageChild {
+  messageId String
+  childId   String
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  child   Child   @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([messageId, childId])
+  @@index([childId])
+}
+
+model MessageReceipt {
+  messageId   String
+  userId      String
+  deliveredAt DateTime  @default(now())
+  readAt      DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Restrict)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([messageId, userId])
+  @@index([userId, readAt])
+}
+
+/// Proposal content is immutable. Only database transition functions may
+/// update status and resolution fields.
+model FamilyRequest {
+  id                 String              @id
+  familyId           String
+  createdById        String
+  respondentId       String
+  type               FamilyRequestType
+  title              String
+  details            String
+  responseDeadlineAt DateTime?
+  status             FamilyRequestStatus @default(OPEN)
+  createdAt          DateTime            @default(now())
+  resolvedAt         DateTime?
+
+  family      Family                  @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy   User                    @relation("RequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  respondent  User                    @relation("RequestRespondent", fields: [respondentId], references: [id], onDelete: Restrict)
+  children    FamilyRequestChild[]
+  responses   RequestResponse[]
+  agreement   Agreement?
+  attachments DocumentFamilyRequest[]
+
+  @@index([familyId, status, createdAt])
+  @@index([respondentId, status])
+}
+
+model FamilyRequestChild {
+  requestId String
+  childId   String
+
+  request FamilyRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  child   Child         @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([requestId, childId])
+  @@index([childId])
+}
+
+model RequestResponse {
+  id           String              @id
+  requestId    String
+  responderId  String
+  type         RequestResponseType
+  details      String?
+  respondsToId String?
+  createdAt    DateTime            @default(now())
+
+  request           FamilyRequest             @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  responder         User                      @relation(fields: [responderId], references: [id], onDelete: Restrict)
+  respondsTo        RequestResponse?          @relation("ResponseThread", fields: [respondsToId], references: [id], onDelete: Restrict)
+  replies           RequestResponse[]         @relation("ResponseThread")
+  acceptedAgreement Agreement?                @relation("AcceptedResponse")
+  attachments       DocumentRequestResponse[]
+
+  @@index([requestId, createdAt])
+  @@index([responderId, createdAt])
+}
+
+model Agreement {
+  id                 String            @id
+  requestId          String            @unique
+  familyId           String
+  acceptedResponseId String            @unique
+  type               FamilyRequestType
+  title              String
+  terms              String
+  agreedAt           DateTime          @default(now())
+
+  request          FamilyRequest   @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  family           Family          @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  acceptedResponse RequestResponse @relation("AcceptedResponse", fields: [acceptedResponseId], references: [id], onDelete: Restrict)
+
+  @@index([familyId, agreedAt])
 }
 
 model CalendarEvent {
-  id      String         @id @default(uuid())
-  group   ParentingGroup @relation(fields: [groupId], references: [id])
-  groupId String
+  id               String   @id
+  familyId         String
+  createdById      String
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
 
-  title       String
-  description String?
-  startTime   DateTime
-  endTime     DateTime
-  createdBy   User?    @relation("CreatedEvents", fields: [createdById], references: [id])
-  createdById String?
+  family         Family                 @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy      User                   @relation("CalendarEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  currentVersion CalendarEventVersion?  @relation("CurrentCalendarVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions       CalendarEventVersion[] @relation("CalendarVersions")
+
+  @@index([familyId, createdAt])
+}
+
+/// Calendar versions are immutable. Changes append a new version and update
+/// only CalendarEvent.currentVersionId through a database function.
+model CalendarEventVersion {
+  id                  String                @id
+  eventId             String
+  revision            Int
+  category            CalendarEventCategory
+  state               CalendarEventState    @default(ACTIVE)
+  title               String
+  description         String?
+  startsAt            DateTime              @db.Timestamptz(3)
+  endsAt              DateTime              @db.Timestamptz(3)
+  timeZone            String
+  responsibleParentId String?
+  changedById         String
+  changeReason        String?
+  createdAt           DateTime              @default(now())
+
+  event             CalendarEvent               @relation("CalendarVersions", fields: [eventId], references: [id], onDelete: Restrict)
+  currentFor        CalendarEvent?              @relation("CurrentCalendarVersion")
+  responsibleParent User?                       @relation("CalendarResponsibleParent", fields: [responsibleParentId], references: [id], onDelete: Restrict)
+  changedBy         User                        @relation("CalendarVersionCreator", fields: [changedById], references: [id], onDelete: Restrict)
+  children          CalendarEventVersionChild[]
+
+  @@unique([eventId, revision])
+  @@index([startsAt, endsAt])
+  @@index([responsibleParentId, startsAt])
+}
+
+model CalendarEventVersionChild {
+  versionId String
+  childId   String
+
+  version CalendarEventVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  child   Child                @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, childId])
+  @@index([childId])
+}
+
+model LivingArrangement {
+  id               String   @id
+  familyId         String
+  createdById      String
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
+
+  family         Family                       @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy      User                         @relation("ArrangementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  currentVersion LivingArrangementVersion?    @relation("CurrentArrangementVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions       LivingArrangementVersion[]   @relation("ArrangementVersions")
+  exceptions     LivingArrangementException[]
+
+  @@index([familyId, createdAt])
+}
+
+model LivingArrangementVersion {
+  id                  String               @id
+  arrangementId       String
+  revision            Int
+  state               ArrangementState     @default(ACTIVE)
+  label               String
+  frequency           ArrangementFrequency
+  dayOfWeek           Int
+  startMinute         Int
+  durationMinutes     Int
+  effectiveStart      DateTime             @db.Date
+  effectiveEnd        DateTime?            @db.Date
+  timeZone            String
+  responsibleParentId String
+  changedById         String
+  changeReason        String?
+  createdAt           DateTime             @default(now())
+
+  arrangement       LivingArrangement               @relation("ArrangementVersions", fields: [arrangementId], references: [id], onDelete: Restrict)
+  currentFor        LivingArrangement?              @relation("CurrentArrangementVersion")
+  responsibleParent User                            @relation("ArrangementResponsibleParent", fields: [responsibleParentId], references: [id], onDelete: Restrict)
+  changedBy         User                            @relation("ArrangementVersionCreator", fields: [changedById], references: [id], onDelete: Restrict)
+  children          LivingArrangementVersionChild[]
+
+  @@unique([arrangementId, revision])
+  @@index([effectiveStart, effectiveEnd])
+}
+
+model LivingArrangementVersionChild {
+  versionId String
+  childId   String
+  version   LivingArrangementVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  child     Child                    @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, childId])
+  @@index([childId])
+}
+
+model LivingArrangementException {
+  id             String            @id
+  arrangementId  String
+  occurrenceDate DateTime          @db.Date
+  reason         String
+  createdById    String
+  createdAt      DateTime          @default(now())
+  arrangement    LivingArrangement @relation(fields: [arrangementId], references: [id], onDelete: Restrict)
+  createdBy      User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([arrangementId, occurrenceDate])
+  @@index([occurrenceDate])
+}
+
+model Child {
+  id          String   @id @default(uuid())
+  familyId    String
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime
+  school      String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  participants EventParticipant[]
+  family              Family                          @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  messages            MessageChild[]
+  requests            FamilyRequestChild[]
+  calendarVersions    CalendarEventVersionChild[]
+  arrangementVersions LivingArrangementVersionChild[]
+  expenseVersions     ExpenseVersionChild[]
+  recurringExpenses   RecurringExpenseChild[]
+  handoverVersions    HandoverVersionChild[]
+  documents           DocumentChild[]
+
+  @@index([familyId])
 }
 
-model EventParticipant {
-  eventId String
-  userId  String
+model Expense {
+  id               String   @id
+  familyId         String
+  createdById      String
+  respondentId     String
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
 
-  event CalendarEvent @relation(fields: [eventId], references: [id])
-  user  User          @relation(fields: [userId], references: [id])
+  family         Family            @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy      User              @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  respondent     User              @relation("ExpenseRespondent", fields: [respondentId], references: [id], onDelete: Restrict)
+  currentVersion ExpenseVersion?   @relation("CurrentExpenseVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions       ExpenseVersion[]  @relation("ExpenseVersions")
+  responses      ExpenseResponse[]
+  documents      Document[]
 
-  @@id([eventId, userId])
+  @@index([familyId, createdAt])
+  @@index([respondentId, createdAt])
 }
 
-model AuditLog {
-  id     String  @id @default(uuid())
-  user   User?   @relation(fields: [userId], references: [id])
-  userId String?
+/// The root record remains stable; replacing a file creates a new immutable
+/// DocumentVersion and advances currentVersionId only through a DB function.
+model Document {
+  id               String   @id
+  familyId         String
+  createdById      String
+  expenseId        String?
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
 
-  action     String // e.g. 'sent_message', 'created_event'
-  entityType String? // e.g. 'message', 'calendar_event'
+  family             Family                   @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy          User                     @relation("DocumentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  expense            Expense?                 @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  currentVersion     DocumentVersion?         @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions           DocumentVersion[]        @relation("DocumentVersions")
+  children           DocumentChild[]
+  messageAttachment  DocumentMessage?
+  requestAttachment  DocumentFamilyRequest?
+  responseAttachment DocumentRequestResponse?
+
+  @@index([familyId, createdAt])
+  @@index([expenseId])
+}
+
+model DocumentVersion {
+  id                   String           @id
+  documentId           String
+  revision             Int
+  category             DocumentCategory
+  title                String
+  description          String?
+  originalFileName     String
+  mediaType            String
+  plaintextSize        Int
+  sha256               String
+  storageKey           String           @unique
+  initializationVector String
+  authenticationTag    String
+  encryptionKeyVersion Int              @default(1)
+  changedById          String
+  changeReason         String?
+  createdAt            DateTime         @default(now())
+
+  document   Document  @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Restrict)
+  currentFor Document? @relation("CurrentDocumentVersion")
+  changedBy  User      @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, revision])
+  @@index([createdAt])
+}
+
+model DocumentChild {
+  documentId String
+  childId    String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  child      Child    @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([documentId, childId])
+  @@index([childId])
+}
+
+model DocumentMessage {
+  documentId String   @id
+  messageId  String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Restrict)
+
+  @@index([messageId])
+}
+
+model DocumentFamilyRequest {
+  documentId String        @id
+  requestId  String
+  document   Document      @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  request    FamilyRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+
+  @@index([requestId])
+}
+
+model DocumentRequestResponse {
+  documentId String          @id
+  responseId String
+  document   Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  response   RequestResponse @relation(fields: [responseId], references: [id], onDelete: Restrict)
+
+  @@index([responseId])
+}
+
+model Notification {
+  id         String           @id
+  userId     String
+  familyId   String
+  type       NotificationType
+  entityType String
+  entityId   String
+  title      String
+  dedupeKey  String           @unique
+  createdAt  DateTime         @default(now())
+  readAt     DateTime?
+
+  user     User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  family   Family                   @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  emailJob NotificationEmailOutbox?
+
+  @@index([userId, readAt, createdAt])
+  @@index([familyId, createdAt])
+}
+
+model NotificationPreference {
+  userId            String
+  type              NotificationType
+  inAppEnabled      Boolean          @default(true)
+  emailEnabled      Boolean          @default(true)
+  reminderLeadHours Int              @default(24)
+  updatedAt         DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([userId, type])
+}
+
+model NotificationEmailOutbox {
+  id                String              @id
+  notificationId    String              @unique
+  status            EmailDeliveryStatus @default(PENDING)
+  attempts          Int                 @default(0)
+  nextAttemptAt     DateTime            @default(now())
+  lockedAt          DateTime?
+  sentAt            DateTime?
+  providerMessageId String?             @unique
+  lastErrorCode     String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+}
+
+model ExpenseVersion {
+  id           String          @id
+  expenseId    String
+  revision     Int
+  category     ExpenseCategory
+  title        String
+  description  String?
+  amountMinor  Int
+  currency     String          @default("GBP")
+  incurredOn   DateTime        @db.Date
+  paidById     String
+  changedById  String
+  changeReason String?
+  createdAt    DateTime        @default(now())
+
+  expense     Expense               @relation("ExpenseVersions", fields: [expenseId], references: [id], onDelete: Restrict)
+  currentFor  Expense?              @relation("CurrentExpenseVersion")
+  paidBy      User                  @relation("ExpensePayer", fields: [paidById], references: [id], onDelete: Restrict)
+  changedBy   User                  @relation("ExpenseVersionCreator", fields: [changedById], references: [id], onDelete: Restrict)
+  allocations ExpenseAllocation[]
+  children    ExpenseVersionChild[]
+  response    ExpenseResponse?
+
+  @@unique([expenseId, revision])
+  @@index([incurredOn])
+}
+
+model ExpenseAllocation {
+  versionId   String
+  userId      String
+  basisPoints Int
+  amountMinor Int
+
+  version ExpenseVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, userId])
+  @@index([userId])
+}
+
+model ExpenseVersionChild {
+  versionId String
+  childId   String
+
+  version ExpenseVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  child   Child          @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, childId])
+  @@index([childId])
+}
+
+model ExpenseResponse {
+  id          String              @id
+  expenseId   String
+  versionId   String              @unique
+  responderId String
+  type        ExpenseResponseType
+  note        String?
+  createdAt   DateTime            @default(now())
+
+  expense   Expense        @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  version   ExpenseVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  responder User           @relation(fields: [responderId], references: [id], onDelete: Restrict)
+
+  @@index([expenseId, createdAt])
+  @@index([responderId, createdAt])
+}
+
+model RecurringExpense {
+  id           String                    @id
+  familyId     String
+  createdById  String
+  category     ExpenseCategory
+  title        String
+  description  String?
+  amountMinor  Int
+  currency     String                    @default("GBP")
+  frequency    RecurringExpenseFrequency
+  startDate    DateTime                  @db.Date
+  endDate      DateTime?                 @db.Date
+  paidById     String
+  createdAt    DateTime                  @default(now())
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  family      Family                       @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy   User                         @relation("RecurringExpenseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  paidBy      User                         @relation("RecurringExpensePayer", fields: [paidById], references: [id], onDelete: Restrict)
+  allocations RecurringExpenseAllocation[]
+  children    RecurringExpenseChild[]
+
+  @@index([familyId, startDate])
+}
+
+model RecurringExpenseAllocation {
+  recurringExpenseId String
+  userId             String
+  basisPoints        Int
+
+  recurringExpense RecurringExpense @relation(fields: [recurringExpenseId], references: [id], onDelete: Restrict)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([recurringExpenseId, userId])
+  @@index([userId])
+}
+
+model RecurringExpenseChild {
+  recurringExpenseId String
+  childId            String
+
+  recurringExpense RecurringExpense @relation(fields: [recurringExpenseId], references: [id], onDelete: Restrict)
+  child            Child            @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([recurringExpenseId, childId])
+  @@index([childId])
+}
+
+model MonthlyExpenseStatement {
+  id                   String   @id
+  familyId             String
+  periodStart          DateTime @db.Date
+  periodEnd            DateTime @db.Date
+  createdById          String
+  expectedTotalMinor   Int
+  actualPaidTotalMinor Int
+  snapshot             Json
+  createdAt            DateTime @default(now())
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([familyId, periodStart])
+  @@index([familyId, createdAt])
+}
+
+model Handover {
+  id               String   @id
+  familyId         String
+  createdById      String
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
+
+  family           Family                    @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy        User                      @relation("HandoverCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  currentVersion   HandoverVersion?          @relation("CurrentHandoverVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions         HandoverVersion[]         @relation("HandoverVersions")
+  acknowledgements HandoverAcknowledgement[]
+
+  @@index([familyId, createdAt])
+}
+
+model HandoverVersion {
+  id           String        @id
+  handoverId   String
+  revision     Int
+  state        HandoverState @default(SCHEDULED)
+  scheduledAt  DateTime      @db.Timestamptz(3)
+  timeZone     String
+  location     String
+  notes        String?
+  fromParentId String
+  toParentId   String
+  changedById  String
+  changeReason String?
+  createdAt    DateTime      @default(now())
+
+  handover         Handover                  @relation("HandoverVersions", fields: [handoverId], references: [id], onDelete: Restrict)
+  currentFor       Handover?                 @relation("CurrentHandoverVersion")
+  fromParent       User                      @relation("HandoverFromParent", fields: [fromParentId], references: [id], onDelete: Restrict)
+  toParent         User                      @relation("HandoverToParent", fields: [toParentId], references: [id], onDelete: Restrict)
+  changedBy        User                      @relation("HandoverVersionCreator", fields: [changedById], references: [id], onDelete: Restrict)
+  children         HandoverVersionChild[]
+  checklistItems   HandoverChecklistItem[]
+  acknowledgements HandoverAcknowledgement[]
+
+  @@unique([handoverId, revision])
+  @@index([scheduledAt])
+}
+
+model HandoverVersionChild {
+  versionId String
+  childId   String
+  version   HandoverVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  child     Child           @relation(fields: [childId], references: [id], onDelete: Restrict)
+
+  @@id([versionId, childId])
+  @@index([childId])
+}
+
+model HandoverChecklistItem {
+  id               String                        @id
+  versionId        String
+  label            String
+  position         Int
+  version          HandoverVersion               @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  acknowledgements HandoverAcknowledgementItem[]
+
+  @@unique([versionId, position])
+}
+
+model HandoverAcknowledgement {
+  id             String                        @id
+  handoverId     String
+  versionId      String
+  userId         String
+  outcome        HandoverOutcome
+  note           String?
+  acknowledgedAt DateTime                      @default(now())
+  handover       Handover                      @relation(fields: [handoverId], references: [id], onDelete: Restrict)
+  version        HandoverVersion               @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  user           User                          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  checkedItems   HandoverAcknowledgementItem[]
+
+  @@unique([versionId, userId])
+  @@index([userId, acknowledgedAt])
+}
+
+model HandoverAcknowledgementItem {
+  acknowledgementId String
+  checklistItemId   String
+  acknowledgement   HandoverAcknowledgement @relation(fields: [acknowledgementId], references: [id], onDelete: Restrict)
+  checklistItem     HandoverChecklistItem   @relation(fields: [checklistItemId], references: [id], onDelete: Restrict)
+
+  @@id([acknowledgementId, checklistItemId])
+}
+
+/// Application roles may insert and read audit events but a database trigger
+/// prevents UPDATE and DELETE. Do not add update/delete methods to the API.
+model AuditEvent {
+  sequence   BigInt   @id @default(autoincrement())
+  id         String   @unique @default(uuid())
+  familyId   String?
+  actorId    String?
+  action     String
+  entityType String
   entityId   String?
+  occurredAt DateTime @default(now())
   metadata   Json?
-  timestamp  DateTime @default(now())
+
+  family Family? @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  actor  User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([familyId, sequence])
+  @@index([actorId, sequence])
 }

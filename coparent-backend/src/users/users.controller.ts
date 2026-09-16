@@ -1,62 +1,45 @@
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
   Get,
-  Request as ReqDecorator,
-  Param,
-  NotFoundException,
   Patch,
-  Delete,
+  Post,
+  Request,
+  UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
-import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user-dto';
-import { UserResponseDto } from './dto/user-response-dto';
-import { UpdateUserDto } from './dto/update-user-dto';
-import { UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { User } from '@prisma/client';
+import { Throttle } from '@nestjs/throttler';
+import { AuthenticatedUser } from '../types/authenticated-user';
+import { CreateUserDto } from './dto/create-user-dto';
+import { UpdateUserDto } from './dto/update-user-dto';
+import { UsersService } from './users.service';
+
+interface AuthenticatedRequest {
+  user: AuthenticatedUser;
+}
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Get()
-  getAllUsers() {}
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post()
+  create(@Body() dto: CreateUserDto) {
+    return this.usersService.create(dto);
+  }
 
   @UseGuards(AuthGuard('jwt'))
   @Get('me')
-  getProfile(
-    @ReqDecorator() req: Request & { user: Omit<User, 'passwordHash'> },
+  getSelf(@Request() request: AuthenticatedRequest) {
+    return this.usersService.findSelf(request.user.userId);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('me')
+  updateSelf(
+    @Request() request: AuthenticatedRequest,
+    @Body() dto: UpdateUserDto,
   ) {
-    return req.user;
-  }
-
-  @UseGuards(AuthGuard('jwt'))
-  @Get(':id')
-  async getUserById(@Param('id') id: string): Promise<UserResponseDto> {
-    const user = await this.usersService.findById(id);
-    if (!user) {
-      throw new NotFoundException(`User with ID ${id} not found`);
-    }
-    return user;
-  }
-
-  @Post()
-  async createUser(@Body() body: CreateUserDto): Promise<UserResponseDto> {
-    return this.usersService.create(body);
-  }
-
-  @UseGuards(AuthGuard('jwt'))
-  @Patch(':id')
-  updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
-  }
-
-  @UseGuards(AuthGuard('jwt'))
-  @Delete(':id')
-  deleteUser(@Param('id') id: string) {
-    return this.usersService.delete(id);
+    return this.usersService.updateSelf(request.user.userId, dto);
   }
 }

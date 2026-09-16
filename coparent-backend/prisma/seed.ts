@@ -1,50 +1,36 @@
-/* eslint-disable @typescript-eslint/no-misused-promises */
 import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+
 const prisma = new PrismaClient();
 
 async function main() {
-  const user1 = await prisma.user.create({
-    data: {
-      firstName: 'Alice',
-      lastName: 'Smith',
-      email: 'alice@example.com',
-      passwordHash: 'hashed-password',
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to seed a production database');
+  }
+
+  const passwordHash = await bcrypt.hash('Development1!', 12);
+  const owner = await prisma.user.upsert({
+    where: { email: 'owner@example.test' },
+    update: {},
+    create: {
+      firstName: 'Dev',
+      lastName: 'Owner',
+      email: 'owner@example.test',
+      passwordHash,
     },
   });
 
-  const user2 = await prisma.user.create({
-    data: {
-      firstName: 'Bob',
-      lastName: 'Jones',
-      email: 'bob@example.com',
-      passwordHash: 'hashed-password',
-    },
+  const existing = await prisma.familyMembership.findFirst({
+    where: { userId: owner.id },
   });
-
-  const group = await prisma.parentingGroup.create({
-    data: {
-      name: "Charlotte's Parents",
-      members: {
-        create: [
-          { user: { connect: { id: user1.id } } },
-          { user: { connect: { id: user2.id } } },
-        ],
+  if (!existing) {
+    await prisma.family.create({
+      data: {
+        name: 'Development family',
+        memberships: { create: { userId: owner.id, role: 'OWNER' } },
       },
-    },
-  });
-
-  await prisma.message.create({
-    data: {
-      groupId: group.id,
-      senderId: user1.id,
-      recipientId: user2.id,
-      content: 'Hello Bob!',
-    },
-  });
-
-  console.log('Seed complete');
+    });
+  }
 }
 
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
+void main().finally(() => prisma.$disconnect());

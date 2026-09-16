@@ -1,95 +1,114 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, User } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'node:crypto';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user-dto';
-import { UserResponseDto } from './dto/user-response-dto';
 import { UpdateUserDto } from './dto/update-user-dto';
-import * as bcrypt from 'bcrypt';
+
+const publicUserSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.UserSelect;
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
+  static readonly DUMMY_PASSWORD_HASH =
+    '$2b$12$K2NJCLRQftxuxu1251P1weT3YwNpdJiNWoafldUUN8Xyo7oR32vyC';
 
-  async create(dto: CreateUserDto): Promise<UserResponseDto> {
-    const passwordHash = await bcrypt.hash(dto.password, 10);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
-    const user = await this.prisma.user.create({
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        email: dto.email,
-        passwordHash,
-      },
-    }); // ✅ Closing ) and ; go here
-
-    return {
-      id: user.id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-    };
-  }
-
-  async findById(id: string): Promise<UserResponseDto | null> {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-    });
-
-    if (!user) return null;
-
-    return {
-      id: user.id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-    };
-  }
-
-  async findByEmail(email: string) {
-    return this.prisma.user.findUnique({ where: { email } });
-  }
-
-  async update(id: string, dto: UpdateUserDto): Promise<UserResponseDto> {
-    const dataToUpdate: any = { ...dto };
-
-    if (dto.email) {
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email: dto.email },
+  async create(dto: CreateUserDto) {
+    if (this.config.getOrThrow<string>('AUTH_MODE') !== 'local') {
+      throw new NotFoundException();
+    }
+    const userId = randomUUID();
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+        const user = await tx.user.create({
+          data: {
+            id: userId,
+            firstName: dto.firstName.trim(),
+            lastName: dto.lastName.trim(),
+            email: dto.email,
+            passwordHash: await bcrypt.hash(dto.password, 12),
+          },
+          select: publicUserSelect,
+        });
+        await tx.auditEvent.create({
+          data: {
+            actorId: user.id,
+            action: 'ACCOUNT_CREATED',
+            entityType: 'User',
+            entityId: user.id,
+          },
+        });
+        return user;
       });
-
-      if (existingUser && existingUser.id !== id) {
-        throw new BadRequestException('Email is already in use.');
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'An account with those details already exists.',
+        );
       }
+      throw error;
     }
-
-    if (dto.password) {
-      const hashed = await bcrypt.hash(dto.password, 10);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      dataToUpdate.passwordHash = hashed;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      delete dataToUpdate.password;
-    }
-
-    const updatedUser = await this.prisma.user.update({
-      where: { id },
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      data: dataToUpdate,
-    });
-
-    return {
-      id: updatedUser.id,
-      firstName: updatedUser.firstName,
-      lastName: updatedUser.lastName,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      createdAt: updatedUser.createdAt,
-    };
   }
 
-  async delete(id: string): Promise<void> {
-    await this.prisma.user.delete({ where: { id } });
+  findAuthenticationRecord(email: string) {
+    return this.prisma.$queryRaw<
+      User[]
+    >`SELECT * FROM find_coparent_local_auth_user(${email})`.then(
+      (users) => users[0] ?? null,
+    );
+  }
+
+  async findSelf(userId: string) {
+    const user = await this.prisma.withActor(userId, (tx) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: publicUserSelect,
+      }),
+    );
+    if (!user) throw new NotFoundException();
+    return user;
+  }
+
+  async updateSelf(userId: string, dto: UpdateUserDto) {
+    return this.prisma.withActor(userId, async (tx) => {
+      const user = await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(dto.firstName && { firstName: dto.firstName.trim() }),
+          ...(dto.lastName && { lastName: dto.lastName.trim() }),
+        },
+        select: publicUserSelect,
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId: userId,
+          action: 'ACCOUNT_PROFILE_UPDATED',
+          entityType: 'User',
+          entityId: userId,
+        },
+      });
+      return user;
+    });
   }
 }

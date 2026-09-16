@@ -1,18 +1,35 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsEmail,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class CreateUserDto {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
   @IsString()
+  @MinLength(1)
+  @MaxLength(100)
   firstName!: string;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
   @IsString()
+  @MinLength(1)
+  @MaxLength(100)
   lastName!: string;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail()
+  @MaxLength(254)
   email!: string;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
   @IsString()
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-  @MinLength(8)
-  password!: string; // plain password (will be hashed)
+  @MinLength(12)
+  @MaxLength(128)
+  @Matches(/[a-z]/, { message: 'password must contain a lowercase letter' })
+  @Matches(/[A-Z]/, { message: 'password must contain an uppercase letter' })
+  @Matches(/[0-9]/, { message: 'password must contain a number' })
+  password!: string;
 }
