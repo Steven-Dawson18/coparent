@@ -136,6 +136,28 @@ sign in; family details, message text and document content are never included in
 notification email. Notification identity is immutable, read transitions are
 database-controlled, and RLS exposes records only to their recipient.
 
+## Audit and evidence API
+
+- `GET /families/:familyId/audit-events?from=<ISO>&to=<ISO>&action=<ACTION>&entityType=<TYPE>`
+- `GET /families/:familyId/evidence-export?from=<ISO>&to=<ISO>&action=<ACTION>&entityType=<TYPE>`
+
+The audit chronology is read-only, family-scoped and cursor paginated. Evidence
+exports are restricted to parents and family owners, contain at most 5,000
+events, and include a SHA-256 checksum over the export content. The checksum is
+an integrity aid rather than a digital signature or a claim that the file is
+legally admissible. Read-only professionals can inspect the chronology but
+cannot download an evidence file.
+
+## Action-focused dashboard API
+
+- `GET /families/:familyId/dashboard`
+
+The dashboard returns one RLS-scoped snapshot containing current and next living
+arrangements, the next seven days of calendar events and handovers, action
+counts for the signed-in parent, unread family messages, and balances calculated
+from accepted expenses. It stores no duplicate summary data and therefore does
+not require a separate migration or background synchronisation process.
+
 ## Requests and decisions API
 
 - `GET /families/:familyId/requests`
@@ -150,6 +172,17 @@ response content is immutable. Acceptance atomically creates a separate
 Agreement snapshot and an audit event. Read-only professionals may inspect the
 record but cannot create or respond.
 
+## Agreement history API
+
+- `GET /families/:familyId/agreements?search=<TEXT>&type=<TYPE>&from=<ISO>&to=<ISO>`
+
+Accepted decisions are searchable by their title, final terms and original
+proposal, and can be filtered by request type or agreement date. Each result
+contains the immutable original request, its child and document links, every
+response in chronological order, the accepted response and the final agreement
+snapshot. Results are family-scoped through application checks and PostgreSQL
+RLS, and use cursor pagination.
+
 ## Shared calendar API
 
 - `GET /families/:familyId/calendar-events?from=<ISO>&to=<ISO>`
@@ -162,6 +195,24 @@ Calendar changes append immutable versions; they never overwrite prior event
 content. Instants are stored as timezone-aware PostgreSQL values and retain the
 IANA timezone used for display. PostgreSQL functions validate family, parent,
 and child relationships and append audit events atomically.
+
+## Read-only calendar subscriptions
+
+- `GET /families/:familyId/calendar-subscriptions`
+- `POST /families/:familyId/calendar-subscriptions`
+- `POST /families/:familyId/calendar-subscriptions/:subscriptionId/revoke`
+- `GET /calendar-feeds/:token/calendar.ics` (private bearer URL)
+
+Owners and parents can create a high-entropy, read-only iCalendar URL for Apple
+Calendar, Google Calendar or Outlook. Only the SHA-256 token digest is stored;
+the raw URL is returned once. Creators and family owners may revoke a feed, and
+feeds stop resolving automatically if their creator loses writable membership.
+The export contains event titles, handover locations and living-arrangement
+labels, but excludes descriptions, notes, messages, expenses and documents.
+Calendar clients receive a rolling window from 30 days ago through one year in
+the future with cache prevention and crawler-exclusion headers. Production
+reverse proxies and observability systems must redact the token segment from
+calendar-feed request URLs and must never forward it to analytics platforms.
 
 ## Recurring living arrangements API
 

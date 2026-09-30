@@ -153,42 +153,43 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships                 FamilyMembership[]
-  auditEvents                 AuditEvent[]                 @relation("AuditActor")
-  identities                  ExternalIdentity[]
-  sentInvitations             FamilyInvitation[]           @relation("InvitationSender")
-  resolvedInvitations         FamilyInvitation[]           @relation("InvitationResolver")
-  sentMessages                Message[]                    @relation("MessageSender")
-  messageReceipts             MessageReceipt[]
-  createdRequests             FamilyRequest[]              @relation("RequestCreator")
-  assignedRequests            FamilyRequest[]              @relation("RequestRespondent")
-  requestResponses            RequestResponse[]
-  createdCalendarEvents       CalendarEvent[]              @relation("CalendarEventCreator")
-  calendarVersions            CalendarEventVersion[]       @relation("CalendarVersionCreator")
-  responsibleCalendarVersions CalendarEventVersion[]       @relation("CalendarResponsibleParent")
-  createdArrangements         LivingArrangement[]          @relation("ArrangementCreator")
-  arrangementVersions         LivingArrangementVersion[]   @relation("ArrangementVersionCreator")
-  responsibleArrangements     LivingArrangementVersion[]   @relation("ArrangementResponsibleParent")
-  arrangementExceptions       LivingArrangementException[]
-  createdExpenses             Expense[]                    @relation("ExpenseCreator")
-  expenseVersions             ExpenseVersion[]             @relation("ExpenseVersionCreator")
-  paidExpenses                ExpenseVersion[]             @relation("ExpensePayer")
-  assignedExpenses            Expense[]                    @relation("ExpenseRespondent")
-  expenseAllocations          ExpenseAllocation[]
-  expenseResponses            ExpenseResponse[]
-  createdRecurringExpenses    RecurringExpense[]           @relation("RecurringExpenseCreator")
-  paidRecurringExpenses       RecurringExpense[]           @relation("RecurringExpensePayer")
-  recurringExpenseAllocations RecurringExpenseAllocation[]
-  createdMonthlyStatements    MonthlyExpenseStatement[]
-  createdHandovers            Handover[]                   @relation("HandoverCreator")
-  handoverVersions            HandoverVersion[]            @relation("HandoverVersionCreator")
-  handoversFrom               HandoverVersion[]            @relation("HandoverFromParent")
-  handoversTo                 HandoverVersion[]            @relation("HandoverToParent")
-  handoverAcknowledgements    HandoverAcknowledgement[]
-  createdDocuments            Document[]                   @relation("DocumentCreator")
-  documentVersions            DocumentVersion[]
-  notifications               Notification[]
-  notificationPreferences     NotificationPreference[]
+  memberships                  FamilyMembership[]
+  auditEvents                  AuditEvent[]                 @relation("AuditActor")
+  identities                   ExternalIdentity[]
+  sentInvitations              FamilyInvitation[]           @relation("InvitationSender")
+  resolvedInvitations          FamilyInvitation[]           @relation("InvitationResolver")
+  sentMessages                 Message[]                    @relation("MessageSender")
+  messageReceipts              MessageReceipt[]
+  createdRequests              FamilyRequest[]              @relation("RequestCreator")
+  assignedRequests             FamilyRequest[]              @relation("RequestRespondent")
+  requestResponses             RequestResponse[]
+  createdCalendarEvents        CalendarEvent[]              @relation("CalendarEventCreator")
+  calendarVersions             CalendarEventVersion[]       @relation("CalendarVersionCreator")
+  responsibleCalendarVersions  CalendarEventVersion[]       @relation("CalendarResponsibleParent")
+  createdArrangements          LivingArrangement[]          @relation("ArrangementCreator")
+  arrangementVersions          LivingArrangementVersion[]   @relation("ArrangementVersionCreator")
+  responsibleArrangements      LivingArrangementVersion[]   @relation("ArrangementResponsibleParent")
+  arrangementExceptions        LivingArrangementException[]
+  createdExpenses              Expense[]                    @relation("ExpenseCreator")
+  expenseVersions              ExpenseVersion[]             @relation("ExpenseVersionCreator")
+  paidExpenses                 ExpenseVersion[]             @relation("ExpensePayer")
+  assignedExpenses             Expense[]                    @relation("ExpenseRespondent")
+  expenseAllocations           ExpenseAllocation[]
+  expenseResponses             ExpenseResponse[]
+  createdRecurringExpenses     RecurringExpense[]           @relation("RecurringExpenseCreator")
+  paidRecurringExpenses        RecurringExpense[]           @relation("RecurringExpensePayer")
+  recurringExpenseAllocations  RecurringExpenseAllocation[]
+  createdMonthlyStatements     MonthlyExpenseStatement[]
+  createdHandovers             Handover[]                   @relation("HandoverCreator")
+  handoverVersions             HandoverVersion[]            @relation("HandoverVersionCreator")
+  handoversFrom                HandoverVersion[]            @relation("HandoverFromParent")
+  handoversTo                  HandoverVersion[]            @relation("HandoverToParent")
+  handoverAcknowledgements     HandoverAcknowledgement[]
+  createdDocuments             Document[]                   @relation("DocumentCreator")
+  documentVersions             DocumentVersion[]
+  notifications                Notification[]
+  notificationPreferences      NotificationPreference[]
+  createdCalendarSubscriptions CalendarSubscription[]
 }
 
 model ExternalIdentity {
@@ -210,21 +211,22 @@ model Family {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships        FamilyMembership[]
-  children           Child[]
-  auditEvents        AuditEvent[]
-  invitations        FamilyInvitation[]
-  messages           Message[]
-  requests           FamilyRequest[]
-  agreements         Agreement[]
-  calendarEvents     CalendarEvent[]
-  livingArrangements LivingArrangement[]
-  expenses           Expense[]
-  recurringExpenses  RecurringExpense[]
-  expenseStatements  MonthlyExpenseStatement[]
-  handovers          Handover[]
-  documents          Document[]
-  notifications      Notification[]
+  memberships           FamilyMembership[]
+  children              Child[]
+  auditEvents           AuditEvent[]
+  invitations           FamilyInvitation[]
+  messages              Message[]
+  requests              FamilyRequest[]
+  agreements            Agreement[]
+  calendarEvents        CalendarEvent[]
+  livingArrangements    LivingArrangement[]
+  expenses              Expense[]
+  recurringExpenses     RecurringExpense[]
+  expenseStatements     MonthlyExpenseStatement[]
+  handovers             Handover[]
+  documents             Document[]
+  notifications         Notification[]
+  calendarSubscriptions CalendarSubscription[]
 }
 
 model FamilyInvitation {
@@ -417,6 +419,25 @@ model CalendarEvent {
   versions       CalendarEventVersion[] @relation("CalendarVersions")
 
   @@index([familyId, createdAt])
+}
+
+/// A calendar subscription stores only a digest of its high-entropy bearer
+/// secret. Feed resolution and revocation are restricted database functions.
+model CalendarSubscription {
+  id             String    @id
+  familyId       String
+  createdById    String
+  label          String
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  revokedAt      DateTime?
+  lastAccessedAt DateTime?
+
+  family    Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([familyId, revokedAt, createdAt])
+  @@index([createdById, revokedAt])
 }
 
 /// Calendar versions are immutable. Changes append a new version and update

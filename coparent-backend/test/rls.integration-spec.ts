@@ -80,6 +80,7 @@ const ids = {
   mismatchedRegistration: '10000000-0000-4000-8000-000000000007',
   createdFamily: '20000000-0000-4000-8000-000000000003',
   mismatchedFamily: '20000000-0000-4000-8000-000000000004',
+  calendarSubscription: 'aa000000-0000-4000-8000-000000000001',
 };
 
 const tokens = {
@@ -87,6 +88,7 @@ const tokens = {
   expired: 'expired-invitation-token-with-sufficient-entropy-test',
   decline: 'decline-invitation-token-with-sufficient-entropy-test',
   revoke: 'revoke-invitation-token-with-sufficient-entropy-for-test',
+  calendar: 'calendar-subscription-secret-with-32-byte-entropy-value',
 };
 
 const hashToken = (token: string) =>
@@ -1215,6 +1217,78 @@ describe('PostgreSQL family row-level security', () => {
     await expect(
       admin.notification.update({ where: { id: items[0]!.id }, data: { title: 'Changed' } }),
     ).rejects.toThrow('Notification identity is immutable');
+  });
+
+  it('protects, resolves, and revokes hashed calendar subscriptions', async () => {
+    await expect(
+      asActor(ids.professional, (tx) =>
+        tx.calendarSubscription.create({
+          data: {
+            id: 'aa000000-0000-4000-8000-000000000099',
+            familyId: ids.familyA,
+            createdById: ids.professional,
+            label: 'Forbidden feed',
+            tokenHash: 'f'.repeat(64),
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await asActor(ids.alice, (tx) =>
+      tx.calendarSubscription.create({
+        data: {
+          id: ids.calendarSubscription,
+          familyId: ids.familyA,
+          createdById: ids.alice,
+          label: 'Alice calendar',
+          tokenHash: hashToken(tokens.calendar),
+        },
+      }),
+    );
+    expect(
+      await asActor(ids.bob, (tx) => tx.calendarSubscription.findMany()),
+    ).toEqual([]);
+
+    const resolved = await runtime.$transaction(async (tx) => {
+      const result = await tx.$queryRaw<
+        Array<{ familyId: string; familyName: string; createdById: string }>
+      >`SELECT * FROM resolve_coparent_calendar_subscription(${hashToken(tokens.calendar)})`;
+      const actor = await tx.$queryRaw<Array<{ actorId: string | null }>>`
+        SELECT current_coparent_user_id() AS "actorId"`;
+      return { result, actor: actor[0]?.actorId };
+    });
+    expect(resolved.result).toEqual([
+      { familyId: ids.familyA, familyName: 'Family A', createdById: ids.alice },
+    ]);
+    expect(resolved.actor).toBe(ids.alice);
+
+    await expect(
+      admin.calendarSubscription.update({
+        where: { id: ids.calendarSubscription },
+        data: { tokenHash: 'e'.repeat(64) },
+      }),
+    ).rejects.toThrow('Calendar subscription identity is immutable');
+
+    const professionalRevoke = await asActor(ids.professional, (tx) =>
+      tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
+        SELECT revoke_coparent_calendar_subscription(
+          ${ids.calendarSubscription}, ${ids.familyA}
+        ) AS "subscriptionId"`,
+    );
+    expect(professionalRevoke[0]?.subscriptionId).toBeNull();
+
+    const ownerRevoke = await asActor(ids.alice, (tx) =>
+      tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
+        SELECT revoke_coparent_calendar_subscription(
+          ${ids.calendarSubscription}, ${ids.familyA}
+        ) AS "subscriptionId"`,
+    );
+    expect(ownerRevoke[0]?.subscriptionId).toBe(ids.calendarSubscription);
+    expect(
+      await runtime.$queryRaw`
+        SELECT * FROM resolve_coparent_calendar_subscription(${hashToken(tokens.calendar)})
+      `,
+    ).toEqual([]);
   });
 
   it('rejects invitation replay and expired invitations without revealing why', async () => {
