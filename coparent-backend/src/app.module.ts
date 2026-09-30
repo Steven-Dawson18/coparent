@@ -21,6 +21,7 @@ import { HandoverModule } from './handover/handover.module';
 import { MessageModule } from './message/message.module';
 import { NotificationModule } from './notification/notification.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ProfessionalModule } from './professional/professional.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
     HandoverModule,
     DocumentModule,
     DashboardModule,
+    ProfessionalModule,
     NotificationModule,
   ],
   controllers: [AppController],

@@ -19,6 +19,7 @@ const ids = {
   professional: '10000000-0000-4000-8000-000000000003',
   charlie: '10000000-0000-4000-8000-000000000004',
   mallory: '10000000-0000-4000-8000-000000000005',
+  controlledProfessional: '10000000-0000-4000-8000-000000000008',
   familyA: '20000000-0000-4000-8000-000000000001',
   familyB: '20000000-0000-4000-8000-000000000002',
   childA: '30000000-0000-4000-8000-000000000001',
@@ -159,6 +160,13 @@ describe('PostgreSQL family row-level security', () => {
           email: 'mallory@example.test',
           passwordHash: 'unused',
         },
+        {
+          id: ids.controlledProfessional,
+          firstName: 'Robin',
+          lastName: 'Reviewer',
+          email: 'reviewer@example.test',
+          passwordHash: 'unused',
+        },
       ],
     });
     await admin.family.createMany({
@@ -174,6 +182,13 @@ describe('PostgreSQL family row-level security', () => {
           familyId: ids.familyA,
           userId: ids.professional,
           role: 'PROFESSIONAL_READ_ONLY',
+        },
+        {
+          familyId: ids.familyA,
+          userId: ids.controlledProfessional,
+          role: 'PROFESSIONAL_READ_ONLY',
+          joinedAt: new Date('2019-01-01T00:00:00Z'),
+          accessExpiresAt: new Date('2020-01-01T00:00:00Z'),
         },
         { familyId: ids.familyB, userId: ids.bob, role: 'OWNER' },
       ],
@@ -1366,5 +1381,73 @@ describe('PostgreSQL family row-level security', () => {
       `,
     );
     expect(useRevokedToken).toEqual([]);
+  });
+
+  it('enforces professional expiry and revocation at the RLS boundary', async () => {
+    expect(
+      await asActor(ids.controlledProfessional, (tx) => tx.child.findMany()),
+    ).toEqual([]);
+
+    const outsider = await asActor(ids.bob, (tx) =>
+      tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT configure_coparent_professional_access(
+          ${ids.familyA}, ${ids.controlledProfessional},
+          ${new Date('2099-01-01T00:00:00Z')}::TIMESTAMPTZ
+        ) AS "userId"`,
+    );
+    expect(outsider[0]?.userId).toBeNull();
+
+    const configured = await asActor(ids.alice, (tx) =>
+      tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT configure_coparent_professional_access(
+          ${ids.familyA}, ${ids.controlledProfessional},
+          ${new Date('2099-01-01T00:00:00Z')}::TIMESTAMPTZ
+        ) AS "userId"`,
+    );
+    expect(configured[0]?.userId).toBe(ids.controlledProfessional);
+    expect(
+      await asActor(ids.controlledProfessional, (tx) =>
+        tx.child.findMany({ select: { id: true } }),
+      ),
+    ).toContainEqual({ id: ids.childA });
+
+    await expect(
+      admin.familyMembership.update({
+        where: {
+          familyId_userId: {
+            familyId: ids.familyA,
+            userId: ids.controlledProfessional,
+          },
+        },
+        data: { accessExpiresAt: null },
+      }),
+    ).rejects.toThrow(
+      'Professional access may change only through a controlled transition',
+    );
+
+    const revoked = await asActor(ids.alice, (tx) =>
+      tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT revoke_coparent_professional_access(
+          ${ids.familyA}, ${ids.controlledProfessional}, ${'Review completed'}
+        ) AS "userId"`,
+    );
+    expect(revoked[0]?.userId).toBe(ids.controlledProfessional);
+    expect(
+      await asActor(ids.controlledProfessional, (tx) => tx.child.findMany()),
+    ).toEqual([]);
+    expect(
+      await admin.auditEvent.count({
+        where: {
+          familyId: ids.familyA,
+          entityId: ids.controlledProfessional,
+          action: {
+            in: [
+              'PROFESSIONAL_ACCESS_EXPIRY_CHANGED',
+              'PROFESSIONAL_ACCESS_REVOKED',
+            ],
+          },
+        },
+      }),
+    ).toBe(2);
   });
 });

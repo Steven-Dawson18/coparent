@@ -275,16 +275,20 @@ model EmailOutbox {
 }
 
 model FamilyMembership {
-  familyId String
-  userId   String
-  role     FamilyRole
-  joinedAt DateTime   @default(now())
+  familyId         String
+  userId           String
+  role             FamilyRole
+  joinedAt         DateTime   @default(now())
+  accessExpiresAt  DateTime?
+  revokedAt        DateTime?
+  revocationReason String?
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@id([familyId, userId])
   @@index([userId])
+  @@index([familyId, role, revokedAt, accessExpiresAt])
 }
 
 /// Messages and their child links are immutable after creation. Database

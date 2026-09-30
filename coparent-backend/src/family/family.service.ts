@@ -56,6 +56,9 @@ export class FamilyService {
             select: {
               role: true,
               joinedAt: true,
+              accessExpiresAt: true,
+              revokedAt: true,
+              revocationReason: true,
               user: { select: { id: true, firstName: true, lastName: true } },
             },
           },

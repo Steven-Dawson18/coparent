@@ -140,6 +140,7 @@ database-controlled, and RLS exposes records only to their recipient.
 
 - `GET /families/:familyId/audit-events?from=<ISO>&to=<ISO>&action=<ACTION>&entityType=<TYPE>`
 - `GET /families/:familyId/evidence-export?from=<ISO>&to=<ISO>&action=<ACTION>&entityType=<TYPE>`
+- `GET /families/:familyId/evidence-package?from=<ISO>&to=<ISO>&sections=<CSV>`
 
 The audit chronology is read-only, family-scoped and cursor paginated. Evidence
 exports are restricted to parents and family owners, contain at most 5,000
@@ -147,6 +148,15 @@ events, and include a SHA-256 checksum over the export content. The checksum is
 an integrity aid rather than a digital signature or a claim that the file is
 legally admissible. Read-only professionals can inspect the chronology but
 cannot download an evidence file.
+
+Advanced evidence packages cover a required period of at most 366 days and can
+select chronology, messages, requests, agreements, calendar and living-
+arrangement history, expenses, document metadata, and handovers. Each package
+has bounded record counts, an opaque package ID, a SHA-256 checksum over its
+structured JSON content, and a corresponding `EVIDENCE_PACKAGE_GENERATED`
+audit event. Document entries include version metadata and plaintext file
+hashes but never encryption material or file binaries. Generating packages
+remains restricted to parents and owners.
 
 ## Action-focused dashboard API
 
@@ -213,6 +223,28 @@ Calendar clients receive a rolling window from 30 days ago through one year in
 the future with cache prevention and crawler-exclusion headers. Production
 reverse proxies and observability systems must redact the token segment from
 calendar-feed request URLs and must never forward it to analytics platforms.
+
+## Professional case portal
+
+- `GET /professional/cases`
+- `GET /professional/cases/:familyId/summary`
+- `GET /families/:familyId/professional-access`
+- `PATCH /families/:familyId/professional-access/:userId`
+- `POST /families/:familyId/professional-access/:userId/revoke`
+
+Accounts invited as `PROFESSIONAL_READ_ONLY` receive a separate, explicitly
+read-only case overview. The summary is role-gated independently of the normal
+family RLS checks and returns bounded record counts, children and parent names,
+upcoming calendar events and handovers, recent agreements, and the latest 20
+audit events. It deliberately excludes message bodies and document contents;
+professionals must open those dedicated, audited records when their work
+requires them. Opening a case appends a `PROFESSIONAL_CASE_VIEWED` audit event,
+and parent accounts cannot use the professional summary endpoint. Family owners
+can set or clear an automatic access expiry and can permanently revoke a
+professional grant with a required reason. Expired and revoked grants fail the
+central PostgreSQL family-membership predicate, so access stops across every
+RLS-protected module rather than only disappearing from the interface. Direct
+membership changes and deletion are trigger-blocked; grant history is retained.
 
 ## Recurring living arrangements API
 
