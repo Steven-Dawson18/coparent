@@ -12,6 +12,8 @@ import { AuthGuard } from '@nestjs/passport';
 import { AuthenticatedUser } from '../types/authenticated-user';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ListMessagesDto } from './dto/list-messages.dto';
+import { ReviewMessageDto } from './dto/review-message.dto';
+import { MessageReviewService } from './message-review.service';
 import { MessageService } from './message.service';
 
 interface AuthenticatedRequest {
@@ -21,7 +23,10 @@ interface AuthenticatedRequest {
 @UseGuards(AuthGuard('jwt'))
 @Controller('families/:familyId/messages')
 export class MessageController {
-  constructor(private readonly messages: MessageService) {}
+  constructor(
+    private readonly messages: MessageService,
+    private readonly reviews: MessageReviewService,
+  ) {}
 
   @Get()
   list(
@@ -39,6 +44,15 @@ export class MessageController {
     @Body() dto: CreateMessageDto,
   ) {
     return this.messages.create(request.user.userId, familyId, dto);
+  }
+
+  @Post('review')
+  review(
+    @Request() request: AuthenticatedRequest,
+    @Param('familyId') familyId: string,
+    @Body() dto: ReviewMessageDto,
+  ) {
+    return this.reviews.review(request.user.userId, familyId, dto);
   }
 
   @Post(':messageId/read')

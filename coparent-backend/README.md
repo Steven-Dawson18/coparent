@@ -84,6 +84,7 @@ idempotency key, and records verified delivery/bounce webhook events.
 
 - `GET /families/:familyId/messages?limit=30&cursor=<messageId>`
 - `POST /families/:familyId/messages`
+- `POST /families/:familyId/messages/review`
 - `POST /families/:familyId/messages/:messageId/read`
 
 Messages are created through an atomic database function that validates family
@@ -95,6 +96,12 @@ request responses accept up to ten `attachmentIds` from the secure document
 service described below. Linking is atomic: documents must be unattached, owned
 by the actor, and in the same family. Once linked, both the association and file
 content are immutable.
+
+Parents can optionally run a draft through the review endpoint before sending.
+It uses local, deterministic wording checks, does not call an external AI
+provider, and does not persist or audit the draft. The result flags common
+escalation patterns and may offer a conservative alternative, but it neither
+judges the facts nor blocks or changes the parent's message.
 
 ## Secure documents API
 
