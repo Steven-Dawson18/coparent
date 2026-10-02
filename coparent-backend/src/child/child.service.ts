@@ -43,6 +43,18 @@ export class ChildService {
           lastName: dto.lastName.trim(),
           dateOfBirth: new Date(dto.dateOfBirth),
           school: dto.school?.trim(),
+          contactInformation: this.clean(dto.contactInformation),
+          emergencyContactName: this.clean(dto.emergencyContactName),
+          emergencyContactRelationship: this.clean(
+            dto.emergencyContactRelationship,
+          ),
+          emergencyContactPhone: this.clean(dto.emergencyContactPhone),
+          gpName: this.clean(dto.gpName),
+          gpPhone: this.clean(dto.gpPhone),
+          dentistName: this.clean(dto.dentistName),
+          dentistPhone: this.clean(dto.dentistPhone),
+          medicalNotes: this.clean(dto.medicalNotes),
+          clubsAndActivities: this.clean(dto.clubsAndActivities),
         },
       });
       await tx.auditEvent.create({
@@ -78,6 +90,36 @@ export class ChildService {
           ...(dto.lastName && { lastName: dto.lastName.trim() }),
           ...(dto.dateOfBirth && { dateOfBirth: new Date(dto.dateOfBirth) }),
           ...(dto.school !== undefined && { school: dto.school.trim() }),
+          ...(dto.contactInformation !== undefined && {
+            contactInformation: this.clean(dto.contactInformation),
+          }),
+          ...(dto.emergencyContactName !== undefined && {
+            emergencyContactName: this.clean(dto.emergencyContactName),
+          }),
+          ...(dto.emergencyContactRelationship !== undefined && {
+            emergencyContactRelationship: this.clean(
+              dto.emergencyContactRelationship,
+            ),
+          }),
+          ...(dto.emergencyContactPhone !== undefined && {
+            emergencyContactPhone: this.clean(dto.emergencyContactPhone),
+          }),
+          ...(dto.gpName !== undefined && { gpName: this.clean(dto.gpName) }),
+          ...(dto.gpPhone !== undefined && {
+            gpPhone: this.clean(dto.gpPhone),
+          }),
+          ...(dto.dentistName !== undefined && {
+            dentistName: this.clean(dto.dentistName),
+          }),
+          ...(dto.dentistPhone !== undefined && {
+            dentistPhone: this.clean(dto.dentistPhone),
+          }),
+          ...(dto.medicalNotes !== undefined && {
+            medicalNotes: this.clean(dto.medicalNotes),
+          }),
+          ...(dto.clubsAndActivities !== undefined && {
+            clubsAndActivities: this.clean(dto.clubsAndActivities),
+          }),
         },
       });
       await tx.auditEvent.create({
@@ -104,5 +146,9 @@ export class ChildService {
       select: { familyId: true },
     });
     if (!membership) throw new NotFoundException();
+  }
+
+  private clean(value?: string) {
+    return value?.trim() || null;
   }
 }

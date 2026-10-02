@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ProfessionalScope } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -18,6 +19,8 @@ export class ProfessionalService {
         select: {
           joinedAt: true,
           accessExpiresAt: true,
+          professionalType: true,
+          professionalScopes: true,
           family: {
             select: {
               id: true,
@@ -47,7 +50,11 @@ export class ProfessionalService {
           accessExpiresAt: true,
           revokedAt: true,
           revocationReason: true,
-          user: { select: { id: true, firstName: true, lastName: true, email: true } },
+          professionalType: true,
+          professionalScopes: true,
+          user: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
         },
       });
     });
@@ -59,14 +66,18 @@ export class ProfessionalService {
     professionalUserId: string,
     dto: ConfigureProfessionalAccessDto,
   ) {
-    const expiresAt = dto.accessExpiresAt ? new Date(dto.accessExpiresAt) : null;
+    const expiresAt = dto.accessExpiresAt
+      ? new Date(dto.accessExpiresAt)
+      : null;
     if (expiresAt && expiresAt.getTime() <= Date.now() + 5 * 60_000)
       throw new NotFoundException();
     const rows = await this.prisma.withActor(
       userId,
       (tx) => tx.$queryRaw<Array<{ userId: string | null }>>`
-        SELECT configure_coparent_professional_access(
-          ${familyId}, ${professionalUserId}, ${expiresAt}::TIMESTAMPTZ
+        SELECT configure_coparent_professional_access_v2(
+          ${familyId}, ${professionalUserId}, ${expiresAt}::TIMESTAMPTZ,
+          ${dto.professionalType ?? 'OTHER'},
+          ${dto.professionalScopes ?? ['CASE_OVERVIEW']}::TEXT[]
         ) AS "userId"
       `,
     );
@@ -98,10 +109,33 @@ export class ProfessionalService {
     return this.prisma.withActor(userId, async (tx) => {
       const membership = await tx.familyMembership.findUnique({
         where: { familyId_userId: { familyId, userId } },
-        select: { role: true, joinedAt: true, accessExpiresAt: true },
+        select: {
+          role: true,
+          joinedAt: true,
+          accessExpiresAt: true,
+          professionalType: true,
+          professionalScopes: true,
+        },
       });
       if (membership?.role !== 'PROFESSIONAL_READ_ONLY')
         throw new NotFoundException();
+      const scopes = new Set(
+        membership.professionalScopes?.length
+          ? membership.professionalScopes
+          : [
+              'CASE_OVERVIEW',
+              'MESSAGES',
+              'REQUESTS',
+              'AGREEMENTS',
+              'CALENDAR',
+              'HANDOVERS',
+              'EXPENSES',
+              'DOCUMENTS',
+              'AUDIT',
+              'EVIDENCE',
+            ],
+      );
+      const permitted = (scope: ProfessionalScope) => scopes.has(scope);
 
       await tx.auditEvent.create({
         data: {
@@ -153,83 +187,117 @@ export class ProfessionalService {
         recentAgreements,
         recentActivity,
       ] = await Promise.all([
-        tx.message.count({ where: { familyId } }),
-        tx.familyRequest.count({ where: { familyId } }),
-        tx.agreement.count({ where: { familyId } }),
-        tx.calendarEvent.count({ where: { familyId } }),
-        tx.expense.count({ where: { familyId } }),
-        tx.document.count({ where: { familyId } }),
-        tx.calendarEvent.findMany({
-          where: {
-            familyId,
-            currentVersion: {
-              state: 'ACTIVE',
-              startsAt: { gte: now, lt: upcomingUntil },
-            },
-          },
-          orderBy: { currentVersion: { startsAt: 'asc' } },
-          take: 10,
-          select: {
-            id: true,
-            currentVersion: {
+        permitted('MESSAGES')
+          ? tx.message.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('REQUESTS')
+          ? tx.familyRequest.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('AGREEMENTS')
+          ? tx.agreement.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('CALENDAR')
+          ? tx.calendarEvent.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('EXPENSES')
+          ? tx.expense.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('DOCUMENTS')
+          ? tx.document.count({ where: { familyId } })
+          : Promise.resolve(0),
+        permitted('CALENDAR')
+          ? tx.calendarEvent.findMany({
+              where: {
+                familyId,
+                currentVersion: {
+                  state: 'ACTIVE',
+                  startsAt: { gte: now, lt: upcomingUntil },
+                },
+              },
+              orderBy: { currentVersion: { startsAt: 'asc' } },
+              take: 10,
               select: {
+                id: true,
+                currentVersion: {
+                  select: {
+                    title: true,
+                    category: true,
+                    startsAt: true,
+                    endsAt: true,
+                    timeZone: true,
+                  },
+                },
+              },
+            })
+          : Promise.resolve([]),
+        permitted('HANDOVERS')
+          ? tx.handover.findMany({
+              where: {
+                familyId,
+                currentVersion: {
+                  state: 'SCHEDULED',
+                  scheduledAt: { gte: now, lt: upcomingUntil },
+                },
+              },
+              orderBy: { currentVersion: { scheduledAt: 'asc' } },
+              take: 10,
+              select: {
+                id: true,
+                currentVersion: {
+                  select: {
+                    scheduledAt: true,
+                    timeZone: true,
+                    location: true,
+                    fromParent: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                    toParent: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                  },
+                },
+              },
+            })
+          : Promise.resolve([]),
+        permitted('AGREEMENTS')
+          ? tx.agreement.findMany({
+              where: { familyId },
+              orderBy: [{ agreedAt: 'desc' }, { id: 'desc' }],
+              take: 5,
+              select: {
+                id: true,
+                type: true,
                 title: true,
-                category: true,
-                startsAt: true,
-                endsAt: true,
-                timeZone: true,
+                terms: true,
+                agreedAt: true,
               },
-            },
-          },
-        }),
-        tx.handover.findMany({
-          where: {
-            familyId,
-            currentVersion: {
-              state: 'SCHEDULED',
-              scheduledAt: { gte: now, lt: upcomingUntil },
-            },
-          },
-          orderBy: { currentVersion: { scheduledAt: 'asc' } },
-          take: 10,
-          select: {
-            id: true,
-            currentVersion: {
+            })
+          : Promise.resolve([]),
+        permitted('AUDIT')
+          ? tx.auditEvent.findMany({
+              where: { familyId },
+              orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+              take: 20,
               select: {
-                scheduledAt: true,
-                timeZone: true,
-                location: true,
-                fromParent: { select: { id: true, firstName: true, lastName: true } },
-                toParent: { select: { id: true, firstName: true, lastName: true } },
+                id: true,
+                action: true,
+                entityType: true,
+                entityId: true,
+                occurredAt: true,
+                actor: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
               },
-            },
-          },
-        }),
-        tx.agreement.findMany({
-          where: { familyId },
-          orderBy: [{ agreedAt: 'desc' }, { id: 'desc' }],
-          take: 5,
-          select: { id: true, type: true, title: true, terms: true, agreedAt: true },
-        }),
-        tx.auditEvent.findMany({
-          where: { familyId },
-          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-          take: 20,
-          select: {
-            id: true,
-            action: true,
-            entityType: true,
-            entityId: true,
-            occurredAt: true,
-            actor: { select: { id: true, firstName: true, lastName: true } },
-          },
-        }),
+            })
+          : Promise.resolve([]),
       ]);
 
       return {
         generatedAt: now,
         access: {
           role: membership.role,
+          professionalType: membership.professionalType,
+          professionalScopes: membership.professionalScopes,
           joinedAt: membership.joinedAt,
           accessExpiresAt: membership.accessExpiresAt,
           readOnly: true,
@@ -238,9 +306,19 @@ export class ProfessionalService {
           id: family.id,
           name: family.name,
           children: family.children,
-          parents: family.memberships.map((item) => ({ ...item.user, role: item.role })),
+          parents: family.memberships.map((item) => ({
+            ...item.user,
+            role: item.role,
+          })),
         },
-        totals: { messages, requests, agreements, calendarEvents, expenses, documents },
+        totals: {
+          messages,
+          requests,
+          agreements,
+          calendarEvents,
+          expenses,
+          documents,
+        },
         upcoming: { events: upcomingEvents, handovers: upcomingHandovers },
         recentAgreements,
         recentActivity,

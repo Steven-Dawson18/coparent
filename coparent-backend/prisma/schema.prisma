@@ -14,6 +14,57 @@ enum FamilyRole {
   PROFESSIONAL_READ_ONLY
 }
 
+enum ProfessionalType {
+  SOLICITOR
+  MEDIATOR
+  COURT_APPOINTED
+  OTHER
+}
+
+enum ProfessionalScope {
+  CASE_OVERVIEW
+  MESSAGES
+  REQUESTS
+  AGREEMENTS
+  CALENDAR
+  HANDOVERS
+  EXPENSES
+  DOCUMENTS
+  AUDIT
+  EVIDENCE
+}
+
+enum DocumentVisibility {
+  FAMILY
+  PARENTS_ONLY
+  EXPLICIT_GRANTS
+}
+
+enum LegalCaseStatus {
+  ACTIVE
+  STAYED
+  CLOSED
+}
+
+enum LegalDisclosureStatus {
+  AWAITING_APPROVAL
+  APPROVED
+  REVOKED
+  EXPIRED
+}
+
+enum SettlementMethod {
+  BANK_TRANSFER
+  CASH
+  CARD
+  OTHER
+}
+
+enum NotificationEndpointChannel {
+  PUSH
+  SMS
+}
+
 enum InvitationStatus {
   PENDING
   ACCEPTED
@@ -129,6 +180,8 @@ enum DocumentCategory {
   SCHOOL
   MEDICAL
   LEGAL
+  COURT_ORDER
+  PARENTING_AGREEMENT
   IDENTITY
   RECEIPT
   ACTIVITY
@@ -190,6 +243,16 @@ model User {
   notifications                Notification[]
   notificationPreferences      NotificationPreference[]
   createdCalendarSubscriptions CalendarSubscription[]
+  createdLegalCases            LegalCase[]                  @relation("LegalCaseCreator")
+  createdLegalDisclosures      LegalDisclosure[]            @relation("LegalDisclosureCreator")
+  receivedLegalDisclosures     LegalDisclosure[]            @relation("LegalDisclosureRecipient")
+  legalDisclosureApprovals     LegalDisclosureApproval[]
+  documentAccessGranted        DocumentAccessGrant[]        @relation("DocumentGrantCreator")
+  documentAccessReceived       DocumentAccessGrant[]        @relation("DocumentGrantRecipient")
+  recordedSettlements          Settlement[]                 @relation("SettlementRecorder")
+  paidSettlements              Settlement[]                 @relation("SettlementPayer")
+  receivedSettlements          Settlement[]                 @relation("SettlementPayee")
+  notificationEndpoints        NotificationEndpoint[]
 }
 
 model ExternalIdentity {
@@ -227,6 +290,9 @@ model Family {
   documents             Document[]
   notifications         Notification[]
   calendarSubscriptions CalendarSubscription[]
+  legalCases            LegalCase[]
+  legalDisclosures      LegalDisclosure[]
+  settlements           Settlement[]
 }
 
 model FamilyInvitation {
@@ -275,13 +341,15 @@ model EmailOutbox {
 }
 
 model FamilyMembership {
-  familyId         String
-  userId           String
-  role             FamilyRole
-  joinedAt         DateTime   @default(now())
-  accessExpiresAt  DateTime?
-  revokedAt        DateTime?
-  revocationReason String?
+  familyId           String
+  userId             String
+  role               FamilyRole
+  joinedAt           DateTime            @default(now())
+  accessExpiresAt    DateTime?
+  revokedAt          DateTime?
+  revocationReason   String?
+  professionalType   ProfessionalType?
+  professionalScopes ProfessionalScope[] @default([])
 
   family Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
@@ -553,14 +621,24 @@ model LivingArrangementException {
 }
 
 model Child {
-  id          String   @id @default(uuid())
-  familyId    String
-  firstName   String
-  lastName    String
-  dateOfBirth DateTime
-  school      String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                           String   @id @default(uuid())
+  familyId                     String
+  firstName                    String
+  lastName                     String
+  dateOfBirth                  DateTime
+  school                       String?
+  contactInformation           String?
+  emergencyContactName         String?
+  emergencyContactRelationship String?
+  emergencyContactPhone        String?
+  gpName                       String?
+  gpPhone                      String?
+  dentistName                  String?
+  dentistPhone                 String?
+  medicalNotes                 String?
+  clubsAndActivities           String?
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
 
   family              Family                          @relation(fields: [familyId], references: [id], onDelete: Restrict)
   messages            MessageChild[]
@@ -598,22 +676,25 @@ model Expense {
 /// The root record remains stable; replacing a file creates a new immutable
 /// DocumentVersion and advances currentVersionId only through a DB function.
 model Document {
-  id               String   @id
+  id               String             @id
   familyId         String
   createdById      String
   expenseId        String?
-  currentVersionId String?  @unique
-  createdAt        DateTime @default(now())
+  currentVersionId String?            @unique
+  createdAt        DateTime           @default(now())
+  visibility       DocumentVisibility @default(FAMILY)
 
-  family             Family                   @relation(fields: [familyId], references: [id], onDelete: Restrict)
-  createdBy          User                     @relation("DocumentCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  expense            Expense?                 @relation(fields: [expenseId], references: [id], onDelete: Restrict)
-  currentVersion     DocumentVersion?         @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
-  versions           DocumentVersion[]        @relation("DocumentVersions")
+  family             Family                    @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy          User                      @relation("DocumentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  expense            Expense?                  @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  currentVersion     DocumentVersion?          @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id], onDelete: Restrict)
+  versions           DocumentVersion[]         @relation("DocumentVersions")
   children           DocumentChild[]
   messageAttachment  DocumentMessage?
   requestAttachment  DocumentFamilyRequest?
   responseAttachment DocumentRequestResponse?
+  accessGrants       DocumentAccessGrant[]
+  disclosureLinks    LegalDisclosureDocument[]
 
   @@index([familyId, createdAt])
   @@index([expenseId])
@@ -708,12 +789,144 @@ model NotificationPreference {
   type              NotificationType
   inAppEnabled      Boolean          @default(true)
   emailEnabled      Boolean          @default(true)
+  pushEnabled       Boolean          @default(false)
+  smsEnabled        Boolean          @default(false)
   reminderLeadHours Int              @default(24)
   updatedAt         DateTime         @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@id([userId, type])
+}
+
+model NotificationEndpoint {
+  id         String                      @id
+  userId     String
+  channel    NotificationEndpointChannel
+  label      String
+  endpoint   String
+  publicKey  String?
+  authSecret String?
+  verifiedAt DateTime?
+  createdAt  DateTime                    @default(now())
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, channel, revokedAt])
+}
+
+model Settlement {
+  id           String           @id
+  familyId     String
+  payerId      String
+  payeeId      String
+  amountMinor  Int
+  currency     String           @default("GBP")
+  paidAt       DateTime         @db.Timestamptz(3)
+  method       SettlementMethod
+  reference    String?
+  note         String?
+  recordedById String
+  createdAt    DateTime         @default(now())
+
+  family     Family @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  payer      User   @relation("SettlementPayer", fields: [payerId], references: [id], onDelete: Restrict)
+  payee      User   @relation("SettlementPayee", fields: [payeeId], references: [id], onDelete: Restrict)
+  recordedBy User   @relation("SettlementRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([familyId, paidAt])
+  @@index([payerId, paidAt])
+  @@index([payeeId, paidAt])
+}
+
+model DocumentAccessGrant {
+  documentId       String
+  userId           String
+  grantedById      String
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  revocationReason String?
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  user      User     @relation("DocumentGrantRecipient", fields: [userId], references: [id], onDelete: Restrict)
+  grantedBy User     @relation("DocumentGrantCreator", fields: [grantedById], references: [id], onDelete: Restrict)
+
+  @@id([documentId, userId])
+  @@index([userId, revokedAt, expiresAt])
+}
+
+model LegalCase {
+  id             String          @id
+  familyId       String
+  caseReference  String
+  courtName      String?
+  proceedingType String
+  status         LegalCaseStatus @default(ACTIVE)
+  details        String?
+  createdById    String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  family      Family            @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  createdBy   User              @relation("LegalCaseCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  disclosures LegalDisclosure[]
+
+  @@unique([familyId, caseReference])
+  @@index([familyId, status])
+}
+
+model LegalDisclosure {
+  id               String                @id
+  legalCaseId      String
+  familyId         String
+  title            String
+  periodFrom       DateTime              @db.Timestamptz(3)
+  periodTo         DateTime              @db.Timestamptz(3)
+  sections         String[]
+  recipientUserId  String
+  accessExpiresAt  DateTime              @db.Timestamptz(3)
+  status           LegalDisclosureStatus @default(AWAITING_APPROVAL)
+  createdById      String
+  createdAt        DateTime              @default(now())
+  approvedAt       DateTime?
+  revokedAt        DateTime?
+  revocationReason String?
+  integritySha256  String?
+
+  legalCase LegalCase                 @relation(fields: [legalCaseId], references: [id], onDelete: Restrict)
+  family    Family                    @relation(fields: [familyId], references: [id], onDelete: Restrict)
+  recipient User                      @relation("LegalDisclosureRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  createdBy User                      @relation("LegalDisclosureCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approvals LegalDisclosureApproval[]
+  documents LegalDisclosureDocument[]
+
+  @@index([familyId, status, createdAt])
+  @@index([recipientUserId, status, accessExpiresAt])
+}
+
+model LegalDisclosureApproval {
+  disclosureId String
+  userId       String
+  approvedAt   DateTime @default(now())
+
+  disclosure LegalDisclosure @relation(fields: [disclosureId], references: [id], onDelete: Restrict)
+  user       User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([disclosureId, userId])
+  @@index([userId, approvedAt])
+}
+
+model LegalDisclosureDocument {
+  disclosureId String
+  documentId   String
+
+  disclosure LegalDisclosure @relation(fields: [disclosureId], references: [id], onDelete: Restrict)
+  document   Document        @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@id([disclosureId, documentId])
+  @@index([documentId])
 }
 
 model NotificationEmailOutbox {

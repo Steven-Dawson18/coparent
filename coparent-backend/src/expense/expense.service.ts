@@ -10,6 +10,7 @@ import {
   CancelRecurringExpenseDto,
   CreateExpenseDto,
   CreateRecurringExpenseDto,
+  CreateSettlementDto,
   ExpenseDto,
   RespondExpenseDto,
   ReviseExpenseDto,
@@ -154,19 +155,33 @@ export class ExpenseService {
   }
 
   async ledger(userId: string, familyId: string, childId?: string) {
-    const accepted = await this.prisma.withActor(userId, (tx) =>
-      tx.expense.findMany({
-        where: {
-          familyId,
-          currentVersion: {
-            response: { type: 'ACCEPT' },
-            ...(childId && { children: { some: { childId } } }),
+    const [accepted, settlements] = await this.prisma.withActor(userId, (tx) =>
+      Promise.all([
+        tx.expense.findMany({
+          where: {
+            familyId,
+            currentVersion: {
+              response: { type: 'ACCEPT' },
+              ...(childId && { children: { some: { childId } } }),
+            },
           },
-        },
-        select: expenseSelect,
-        orderBy: { currentVersion: { incurredOn: 'desc' } },
-        take: 500,
-      }),
+          select: expenseSelect,
+          orderBy: { currentVersion: { incurredOn: 'desc' } },
+          take: 500,
+        }),
+        tx.settlement.findMany({
+          where: { familyId },
+          orderBy: [{ paidAt: 'desc' }, { id: 'desc' }],
+          take: 500,
+          include: {
+            payer: { select: { id: true, firstName: true, lastName: true } },
+            payee: { select: { id: true, firstName: true, lastName: true } },
+            recordedBy: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+          },
+        }),
+      ]),
     );
     const balances = new Map<string, number>();
     for (const expense of accepted) {
@@ -182,13 +197,46 @@ export class ExpenseService {
           (balances.get(allocation.userId) ?? 0) - allocation.amountMinor,
         );
     }
+    for (const settlement of settlements) {
+      balances.set(
+        settlement.payerId,
+        (balances.get(settlement.payerId) ?? 0) + settlement.amountMinor,
+      );
+      balances.set(
+        settlement.payeeId,
+        (balances.get(settlement.payeeId) ?? 0) - settlement.amountMinor,
+      );
+    }
     return {
       entries: accepted,
+      settlements,
       balances: [...balances.entries()].map(([userId, amountMinor]) => ({
         userId,
         amountMinor,
       })),
     };
+  }
+
+  async createSettlement(
+    userId: string,
+    familyId: string,
+    dto: CreateSettlementDto,
+  ) {
+    if (dto.payerId === dto.payeeId)
+      throw new BadRequestException(
+        'Payer and recipient must be different parents.',
+      );
+    const id = randomUUID();
+    const rows = await this.prisma.withActor(
+      userId,
+      (tx) => tx.$queryRaw<Array<{ id: string | null }>>`
+        SELECT create_coparent_settlement(
+          ${id},${familyId},${dto.payerId},${dto.payeeId},${dto.amountMinor}::INTEGER,
+          ${new Date(dto.paidAt)},${dto.method},${dto.reference ?? null},${dto.note ?? null}
+        ) AS id`,
+    );
+    if (rows[0]?.id !== id) throw new NotFoundException();
+    return { id };
   }
 
   listRecurring(userId: string, familyId: string) {

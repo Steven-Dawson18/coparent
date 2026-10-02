@@ -16,6 +16,8 @@
 - Atomic invitation acceptance bound to the authenticated account email
 - Encrypted transactional email outbox with bounded retries and idempotent delivery
 - Immutable, categorized family messages with child context and read receipts
+- Court-case records and unanimously approved, expiring legal disclosures
+- Immutable settlements, protected document grants, richer child profiles, and scoped professional access
 
 The Phase 0 schema deliberately replaces the prototype schema. Existing local
 prototype databases require an explicitly approved reset before applying it; do
@@ -110,6 +112,9 @@ judges the facts nor blocks or changes the parent's message.
 - `PATCH /families/:familyId/documents/:documentId` (new immutable version)
 - `GET /families/:familyId/documents/:documentId/history`
 - `GET /families/:familyId/documents/:documentId/download`
+- `PATCH /families/:familyId/documents/:documentId/visibility`
+- `POST /families/:familyId/documents/:documentId/access`
+- `POST /families/:familyId/documents/:documentId/access/revoke`
 
 Files are limited to 10 MB and an allow-list of PDF, JPEG, PNG, WebP, text and
 DOCX. The service verifies file signatures, encrypts each file with AES-256-GCM
@@ -126,6 +131,12 @@ losing either makes documents unrecoverable. Production object storage can
 replace the local provider through `FileStorageService` without changing the
 document API.
 
+Medical records, court orders, parenting agreements and general legal records
+default to `PARENTS_ONLY`. A parent may instead use `EXPLICIT_GRANTS` and grant
+a named professional access with an optional expiry. Grants can be revoked and
+are checked by PostgreSQL RLS on documents, versions and child links. `FAMILY`
+visibility retains the earlier family-wide behaviour.
+
 ## Notifications and reminders API
 
 - `GET /notifications`
@@ -134,6 +145,9 @@ document API.
 - `POST /notifications/read-all`
 - `GET /notifications/preferences`
 - `PATCH /notifications/preferences`
+- `GET /notifications/endpoints`
+- `POST /notifications/endpoints`
+- `POST /notifications/endpoints/:endpointId/revoke`
 
 Messages, requests and expenses generate deduplicated recipient notifications
 inside the same database transaction. A background worker creates upcoming
@@ -142,6 +156,31 @@ The retryable email outbox sends only a generic title and directs the user to
 sign in; family details, message text and document content are never included in
 notification email. Notification identity is immutable, read transitions are
 database-controlled, and RLS exposes records only to their recipient.
+
+Preferences now include browser push and optional SMS. Browser subscriptions
+are stored as user-owned endpoints and can be revoked. SMS endpoints remain
+unverified until a production provider verification flow is configured, so SMS
+cannot be enabled accidentally. These endpoint and preference APIs are the
+provider-independent channel foundation; production push/SMS dispatch still
+requires provider credentials and a delivery adapter.
+
+## Legal cases and controlled disclosures
+
+- `GET /families/:familyId/legal`
+- `POST /families/:familyId/legal/cases`
+- `POST /families/:familyId/legal/disclosures`
+- `POST /families/:familyId/legal/disclosures/:disclosureId/approve`
+- `POST /families/:familyId/legal/disclosures/:disclosureId/revoke`
+- `GET /families/:familyId/legal/disclosures/:disclosureId/bundle`
+
+Parents can record a case reference, court and proceeding details, then define
+a bounded disclosure period, sections, selected protected documents, recipient
+and expiry. Every active owner/parent must approve before access opens. Access
+expires automatically and any parent can revoke it with a recorded reason.
+The JSON bundle contains a cover page, index, selected record sections,
+chronology, document hashes, approval history and a SHA-256 integrity manifest.
+Every download is audited. It is a structured record export—not legal advice,
+a legal opinion, or a guarantee of admissibility.
 
 ## Audit and evidence API
 
@@ -247,8 +286,11 @@ audit events. It deliberately excludes message bodies and document contents;
 professionals must open those dedicated, audited records when their work
 requires them. Opening a case appends a `PROFESSIONAL_CASE_VIEWED` audit event,
 and parent accounts cannot use the professional summary endpoint. Family owners
-can set or clear an automatic access expiry and can permanently revoke a
-professional grant with a required reason. Expired and revoked grants fail the
+can assign a professional type (`SOLICITOR`, `MEDIATOR`, `COURT_APPOINTED` or
+`OTHER`), explicit feature scopes and an automatic access expiry, or permanently
+revoke a grant with a required reason. Each request binds its feature scope into
+the database transaction; professionals without it fail the central PostgreSQL
+membership predicate. Expired and revoked grants fail the
 central PostgreSQL family-membership predicate, so access stops across every
 RLS-protected module rather than only disappearing from the interface. Direct
 membership changes and deletion are trigger-blocked; grant history is retained.
@@ -274,11 +316,25 @@ schedule and its audit history are not overwritten.
 - `POST /families/:familyId/expenses`
 - `PATCH /families/:familyId/expenses/:expenseId`
 - `POST /families/:familyId/expenses/:expenseId/respond`
+- `POST /families/:familyId/expenses/settlements`
 
 Amounts are stored as integer pence and allocations must total exactly 100%.
 Only accepted current versions contribute to the ledger balance. Declines and
 disputes require a note. Corrections append a new immutable version and require
 fresh acknowledgement; prior proposals and responses remain permanent.
+
+Recorded payments support bank transfer, cash, card and other methods, including
+partial payments. They are immutable, audited and included in the ledger so the
+current parent-to-parent balance and settlement history remain reproducible.
+Monthly statement snapshots continue to provide period history.
+
+## Rich child profiles
+
+Child create/update APIs now support emergency-contact details, child contact
+information, GP and dentist details, medical notes, and clubs/activities. These
+fields remain inside the same family RLS boundary. Photographs have deliberately
+not been added as a plain profile field; they should use the encrypted document
+pipeline when a dedicated child-photo experience is introduced.
 
 This project is a backend service for the CoParent application, built using [NestJS](https://nestjs.com/), [Prisma](https://www.prisma.io/), and PostgreSQL. It runs in a Dockerized environment using `docker-compose`.
 

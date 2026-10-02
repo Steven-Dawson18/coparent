@@ -11,6 +11,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { AuthenticatedUser } from '../types/authenticated-user';
 import { NotificationPreferenceDto } from './dto/notification-preference.dto';
+import { RegisterNotificationEndpointDto } from './dto/notification-endpoint.dto';
 import { NotificationService } from './notification.service';
 interface R {
   user: AuthenticatedUser;
@@ -40,5 +41,20 @@ export class NotificationController {
     @Body() dto: NotificationPreferenceDto,
   ) {
     return this.service.setPreference(r.user.userId, dto);
+  }
+  @Get('endpoints') endpoints(@Request() r: R) {
+    return this.service.endpoints(r.user.userId);
+  }
+  @Post('endpoints') registerEndpoint(
+    @Request() r: R,
+    @Body() dto: RegisterNotificationEndpointDto,
+  ) {
+    return this.service.registerEndpoint(r.user.userId, dto);
+  }
+  @Post('endpoints/:id/revoke') revokeEndpoint(
+    @Request() r: R,
+    @Param('id') id: string,
+  ) {
+    return this.service.revokeEndpoint(r.user.userId, id);
   }
 }

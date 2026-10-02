@@ -3,6 +3,7 @@ import {
   ExpenseCategory,
   ExpenseResponseType,
   RecurringExpenseFrequency,
+  SettlementMethod,
 } from '@prisma/client';
 import {
   ArrayMaxSize,
@@ -10,6 +11,7 @@ import {
   ArrayUnique,
   IsArray,
   IsDateString,
+  IsISO8601,
   IsEnum,
   IsInt,
   IsOptional,
@@ -69,4 +71,14 @@ export class CreateRecurringExpenseDto extends ExpenseDto {
 
 export class CancelRecurringExpenseDto {
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+
+export class CreateSettlementDto {
+  @IsUUID('4') payerId!: string;
+  @IsUUID('4') payeeId!: string;
+  @IsInt() @Min(1) @Max(100000000) amountMinor!: number;
+  @IsISO8601({ strict: true }) paidAt!: string;
+  @IsEnum(SettlementMethod) method!: SettlementMethod;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(200) reference?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(1000) note?: string;
 }

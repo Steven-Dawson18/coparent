@@ -7,8 +7,14 @@ import {
 import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { EvidencePackageDto, EvidenceSection } from './dto/evidence-package.dto';
-import { EvidenceExportDto, ListAuditEventsDto } from './dto/list-audit-events.dto';
+import {
+  EvidencePackageDto,
+  EvidenceSection,
+} from './dto/evidence-package.dto';
+import {
+  EvidenceExportDto,
+  ListAuditEventsDto,
+} from './dto/list-audit-events.dto';
 
 const eventSelect = {
   sequence: true,
@@ -21,7 +27,15 @@ const eventSelect = {
   actor: { select: { id: true, firstName: true, lastName: true } },
 } satisfies Prisma.AuditEventSelect;
 
-type SelectedEvent = Prisma.AuditEventGetPayload<{ select: typeof eventSelect }>;
+type SelectedEvent = Prisma.AuditEventGetPayload<{
+  select: typeof eventSelect;
+}>;
+
+export interface EvidencePackageOptions {
+  allowProfessional?: boolean;
+  recordAudit?: boolean;
+  documentIds?: string[];
+}
 
 @Injectable()
 export class AuditService {
@@ -37,9 +51,13 @@ export class AuditService {
     const start = from ? new Date(from) : undefined;
     const end = to ? new Date(to) : undefined;
     if (start && end && start > end) {
-      throw new BadRequestException('The start date must be before the end date.');
+      throw new BadRequestException(
+        'The start date must be before the end date.',
+      );
     }
-    return start || end ? { ...(start && { gte: start }), ...(end && { lte: end }) } : undefined;
+    return start || end
+      ? { ...(start && { gte: start }), ...(end && { lte: end }) }
+      : undefined;
   }
 
   private serialize(event: SelectedEvent) {
@@ -68,10 +86,12 @@ export class AuditService {
         select: eventSelect,
       });
       const hasMore = rows.length > query.limit;
-      const items = rows.slice(0, query.limit).map((event) => this.serialize(event));
+      const items = rows
+        .slice(0, query.limit)
+        .map((event) => this.serialize(event));
       return {
         items,
-        nextCursor: hasMore ? items.at(-1)?.sequence ?? null : null,
+        nextCursor: hasMore ? (items.at(-1)?.sequence ?? null) : null,
       };
     });
   }
@@ -85,7 +105,9 @@ export class AuditService {
       });
       if (!membership) throw new NotFoundException();
       if (membership.role === 'PROFESSIONAL_READ_ONLY') {
-        throw new ForbiddenException('Evidence export is limited to parents and family owners.');
+        throw new ForbiddenException(
+          'Evidence export is limited to parents and family owners.',
+        );
       }
       const rows = await tx.auditEvent.findMany({
         where: {
@@ -99,7 +121,9 @@ export class AuditService {
         select: eventSelect,
       });
       if (rows.length > 5000) {
-        throw new BadRequestException('Narrow the date range to 5,000 events or fewer.');
+        throw new BadRequestException(
+          'Narrow the date range to 5,000 events or fewer.',
+        );
       }
       const events = rows.map((event) => this.serialize(event));
       const generatedAt = new Date().toISOString();
@@ -123,7 +147,8 @@ export class AuditService {
         integrity: {
           algorithm: 'SHA-256',
           checksum: createHash('sha256').update(canonical).digest('hex'),
-          scope: 'UTF-8 JSON encoding of this document without the integrity property',
+          scope:
+            'UTF-8 JSON encoding of this document without the integrity property',
           notice:
             'This checksum detects changes to this export. It is not a digital signature or a statement of legal admissibility.',
         },
@@ -131,12 +156,22 @@ export class AuditService {
     });
   }
 
-  async createPackage(userId: string, familyId: string, query: EvidencePackageDto) {
+  async createPackage(
+    userId: string,
+    familyId: string,
+    query: EvidencePackageDto,
+    options: EvidencePackageOptions = {},
+  ) {
     const from = new Date(query.from);
     const to = new Date(query.to);
-    if (from >= to) throw new BadRequestException('The start date must be before the end date.');
+    if (from >= to)
+      throw new BadRequestException(
+        'The start date must be before the end date.',
+      );
     if (to.getTime() - from.getTime() > 366 * 86400000)
-      throw new BadRequestException('Evidence packages are limited to a 366-day period.');
+      throw new BadRequestException(
+        'Evidence packages are limited to a 366-day period.',
+      );
     const sections = [...new Set(query.sections)] as EvidenceSection[];
     const createdAt = { gte: from, lte: to };
     const packageId = randomUUID();
@@ -152,13 +187,20 @@ export class AuditService {
               name: true,
               children: {
                 orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-                select: { id: true, firstName: true, lastName: true, dateOfBirth: true },
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  dateOfBirth: true,
+                },
               },
               memberships: {
                 where: { role: { in: ['OWNER', 'PARENT'] } },
                 select: {
                   role: true,
-                  user: { select: { id: true, firstName: true, lastName: true } },
+                  user: {
+                    select: { id: true, firstName: true, lastName: true },
+                  },
                 },
               },
             },
@@ -166,22 +208,27 @@ export class AuditService {
         },
       });
       if (!membership) throw new NotFoundException();
-      if (membership.role === 'PROFESSIONAL_READ_ONLY')
+      if (
+        membership.role === 'PROFESSIONAL_READ_ONLY' &&
+        !options.allowProfessional
+      )
         throw new ForbiddenException(
           'Evidence packages are limited to parents and family owners.',
         );
 
-      await tx.auditEvent.create({
-        data: {
-          id: randomUUID(),
-          familyId,
-          actorId: userId,
-          action: 'EVIDENCE_PACKAGE_GENERATED',
-          entityType: 'EvidencePackage',
-          entityId: packageId,
-          metadata: { from: query.from, to: query.to, sections },
-        },
-      });
+      if (options.recordAudit !== false) {
+        await tx.auditEvent.create({
+          data: {
+            id: randomUUID(),
+            familyId,
+            actorId: userId,
+            action: 'EVIDENCE_PACKAGE_GENERATED',
+            entityType: 'EvidencePackage',
+            entityId: packageId,
+            metadata: { from: query.from, to: query.to, sections },
+          },
+        });
+      }
 
       const enabled = (section: EvidenceSection) => sections.includes(section);
       const [
@@ -213,11 +260,19 @@ export class AuditService {
                 category: true,
                 body: true,
                 createdAt: true,
-                sender: { select: { id: true, firstName: true, lastName: true } },
-                children: {
-                  select: { child: { select: { id: true, firstName: true, lastName: true } } },
+                sender: {
+                  select: { id: true, firstName: true, lastName: true },
                 },
-                receipts: { select: { userId: true, deliveredAt: true, readAt: true } },
+                children: {
+                  select: {
+                    child: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                  },
+                },
+                receipts: {
+                  select: { userId: true, deliveredAt: true, readAt: true },
+                },
                 attachments: { select: { documentId: true } },
               },
             })
@@ -239,8 +294,12 @@ export class AuditService {
                 responseDeadlineAt: true,
                 createdAt: true,
                 resolvedAt: true,
-                createdBy: { select: { id: true, firstName: true, lastName: true } },
-                respondent: { select: { id: true, firstName: true, lastName: true } },
+                createdBy: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+                respondent: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
                 children: { select: { childId: true } },
                 attachments: { select: { documentId: true } },
                 responses: {
@@ -251,7 +310,9 @@ export class AuditService {
                     details: true,
                     respondsToId: true,
                     createdAt: true,
-                    responder: { select: { id: true, firstName: true, lastName: true } },
+                    responder: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                     attachments: { select: { documentId: true } },
                   },
                 },
@@ -282,7 +343,9 @@ export class AuditService {
               select: {
                 id: true,
                 createdAt: true,
-                createdBy: { select: { id: true, firstName: true, lastName: true } },
+                createdBy: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
                 versions: {
                   where: { createdAt },
                   orderBy: { revision: 'asc' },
@@ -301,7 +364,9 @@ export class AuditService {
                     responsibleParent: {
                       select: { id: true, firstName: true, lastName: true },
                     },
-                    changedBy: { select: { id: true, firstName: true, lastName: true } },
+                    changedBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                     children: { select: { childId: true } },
                   },
                 },
@@ -336,7 +401,9 @@ export class AuditService {
                     responsibleParent: {
                       select: { id: true, firstName: true, lastName: true },
                     },
-                    changedBy: { select: { id: true, firstName: true, lastName: true } },
+                    changedBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                     children: { select: { childId: true } },
                   },
                 },
@@ -348,7 +415,9 @@ export class AuditService {
                     occurrenceDate: true,
                     reason: true,
                     createdAt: true,
-                    createdBy: { select: { id: true, firstName: true, lastName: true } },
+                    createdBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                   },
                 },
               },
@@ -362,8 +431,12 @@ export class AuditService {
               select: {
                 id: true,
                 createdAt: true,
-                createdBy: { select: { id: true, firstName: true, lastName: true } },
-                respondent: { select: { id: true, firstName: true, lastName: true } },
+                createdBy: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+                respondent: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
                 versions: {
                   where: { createdAt },
                   orderBy: { revision: 'asc' },
@@ -378,10 +451,18 @@ export class AuditService {
                     incurredOn: true,
                     changeReason: true,
                     createdAt: true,
-                    paidBy: { select: { id: true, firstName: true, lastName: true } },
-                    changedBy: { select: { id: true, firstName: true, lastName: true } },
+                    paidBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                    changedBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                     allocations: {
-                      select: { userId: true, basisPoints: true, amountMinor: true },
+                      select: {
+                        userId: true,
+                        basisPoints: true,
+                        amountMinor: true,
+                      },
                     },
                     children: { select: { childId: true } },
                     response: {
@@ -390,7 +471,9 @@ export class AuditService {
                         type: true,
                         note: true,
                         createdAt: true,
-                        responder: { select: { id: true, firstName: true, lastName: true } },
+                        responder: {
+                          select: { id: true, firstName: true, lastName: true },
+                        },
                       },
                     },
                   },
@@ -400,14 +483,22 @@ export class AuditService {
           : Promise.resolve([]),
         enabled('documents')
           ? tx.document.findMany({
-              where: { familyId, versions: { some: { createdAt } } },
+              where: {
+                familyId,
+                ...(options.documentIds && {
+                  id: { in: options.documentIds },
+                }),
+                versions: { some: { createdAt } },
+              },
               orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
               take: 1001,
               select: {
                 id: true,
                 expenseId: true,
                 createdAt: true,
-                createdBy: { select: { id: true, firstName: true, lastName: true } },
+                createdBy: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
                 children: { select: { childId: true } },
                 messageAttachment: { select: { messageId: true } },
                 requestAttachment: { select: { requestId: true } },
@@ -427,7 +518,9 @@ export class AuditService {
                     sha256: true,
                     changeReason: true,
                     createdAt: true,
-                    changedBy: { select: { id: true, firstName: true, lastName: true } },
+                    changedBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                   },
                 },
               },
@@ -454,9 +547,15 @@ export class AuditService {
                     notes: true,
                     changeReason: true,
                     createdAt: true,
-                    fromParent: { select: { id: true, firstName: true, lastName: true } },
-                    toParent: { select: { id: true, firstName: true, lastName: true } },
-                    changedBy: { select: { id: true, firstName: true, lastName: true } },
+                    fromParent: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                    toParent: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
+                    changedBy: {
+                      select: { id: true, firstName: true, lastName: true },
+                    },
                     children: { select: { childId: true } },
                     checklistItems: {
                       orderBy: { position: 'asc' },
@@ -469,7 +568,9 @@ export class AuditService {
                         outcome: true,
                         note: true,
                         acknowledgedAt: true,
-                        user: { select: { id: true, firstName: true, lastName: true } },
+                        user: {
+                          select: { id: true, firstName: true, lastName: true },
+                        },
                         checkedItems: { select: { checklistItemId: true } },
                       },
                     },
@@ -499,7 +600,9 @@ export class AuditService {
 
       const records: Record<string, unknown> = {};
       if (enabled('chronology'))
-        records.chronology = chronologyRows.map((event) => this.serialize(event));
+        records.chronology = (chronologyRows as SelectedEvent[]).map((event) =>
+          this.serialize(event),
+        );
       if (enabled('messages')) records.messages = messages;
       if (enabled('requests')) records.requests = requests;
       if (enabled('agreements')) records.agreements = agreements;
@@ -531,7 +634,8 @@ export class AuditService {
             Array.isArray(value)
               ? value.length
               : Object.values(value as Record<string, unknown>).reduce<number>(
-                  (total, rows) => total + (Array.isArray(rows) ? rows.length : 0),
+                  (total, rows) =>
+                    total + (Array.isArray(rows) ? rows.length : 0),
                   0,
                 ),
           ]),
@@ -548,7 +652,8 @@ export class AuditService {
         integrity: {
           algorithm: 'SHA-256',
           checksum: createHash('sha256').update(canonical).digest('hex'),
-          scope: 'UTF-8 JSON encoding of this document without the integrity property',
+          scope:
+            'UTF-8 JSON encoding of this document without the integrity property',
           notice:
             'Recalculate the checksum after removing the integrity property to detect changes.',
         },

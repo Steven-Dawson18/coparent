@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -19,10 +19,12 @@ import { FamilyRequestModule } from './family-request/family-request.module';
 import { InvitationModule } from './invitation/invitation.module';
 import { HandoverModule } from './handover/handover.module';
 import { MessageModule } from './message/message.module';
+import { LegalModule } from './legal/legal.module';
 import { NotificationModule } from './notification/notification.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProfessionalModule } from './professional/professional.module';
 import { UsersModule } from './users/users.module';
+import { ProfessionalScopeInterceptor } from './security/professional-scope.interceptor';
 
 @Module({
   imports: [
@@ -39,6 +41,7 @@ import { UsersModule } from './users/users.module';
     CalendarModule,
     CalendarSubscriptionModule,
     MessageModule,
+    LegalModule,
     FamilyRequestModule,
     ExpenseModule,
     HandoverModule,
@@ -48,6 +51,10 @@ import { UsersModule } from './users/users.module';
     NotificationModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: ProfessionalScopeInterceptor },
+  ],
 })
 export class AppModule {}

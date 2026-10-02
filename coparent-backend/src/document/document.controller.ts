@@ -17,7 +17,13 @@ import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { AuthenticatedUser } from '../types/authenticated-user';
 import { DocumentService, UploadedDocumentFile } from './document.service';
-import { CreateDocumentDto, ReviseDocumentDto } from './dto/document.dto';
+import {
+  CreateDocumentDto,
+  DocumentVisibilityDto,
+  GrantDocumentAccessDto,
+  RevokeDocumentAccessDto,
+  ReviseDocumentDto,
+} from './dto/document.dto';
 
 interface R {
   user: AuthenticatedUser;
@@ -69,6 +75,53 @@ export class DocumentController {
     @Param('id') id: string,
   ) {
     return this.service.history(r.user.userId, familyId, id);
+  }
+
+  @Patch(':id/visibility')
+  visibility(
+    @Request() r: R,
+    @Param('familyId') familyId: string,
+    @Param('id') id: string,
+    @Body() dto: DocumentVisibilityDto,
+  ) {
+    return this.service.setVisibility(
+      r.user.userId,
+      familyId,
+      id,
+      dto.visibility,
+    );
+  }
+
+  @Post(':id/access')
+  grant(
+    @Request() r: R,
+    @Param('familyId') familyId: string,
+    @Param('id') id: string,
+    @Body() dto: GrantDocumentAccessDto,
+  ) {
+    return this.service.grantAccess(
+      r.user.userId,
+      familyId,
+      id,
+      dto.userId,
+      dto.expiresAt,
+    );
+  }
+
+  @Post(':id/access/revoke')
+  revoke(
+    @Request() r: R,
+    @Param('familyId') familyId: string,
+    @Param('id') id: string,
+    @Body() dto: RevokeDocumentAccessDto,
+  ) {
+    return this.service.revokeAccess(
+      r.user.userId,
+      familyId,
+      id,
+      dto.userId,
+      dto.reason,
+    );
   }
 
   @Get(':id/download')

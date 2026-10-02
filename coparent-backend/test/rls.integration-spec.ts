@@ -82,6 +82,9 @@ const ids = {
   createdFamily: '20000000-0000-4000-8000-000000000003',
   mismatchedFamily: '20000000-0000-4000-8000-000000000004',
   calendarSubscription: 'aa000000-0000-4000-8000-000000000001',
+  settlement: 'ab000000-0000-4000-8000-000000000001',
+  legalCase: 'ac000000-0000-4000-8000-000000000001',
+  legalDisclosure: 'ad000000-0000-4000-8000-000000000001',
 };
 
 const tokens = {
@@ -100,9 +103,11 @@ async function asActor<T>(
   callback: (
     tx: Parameters<Parameters<typeof runtime.$transaction>[0]>[0],
   ) => Promise<T>,
+  professionalScope = 'CASE_OVERVIEW',
 ) {
   return runtime.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.current_professional_scope', ${professionalScope}, true)`;
     return callback(tx);
   });
 }
@@ -182,6 +187,19 @@ describe('PostgreSQL family row-level security', () => {
           familyId: ids.familyA,
           userId: ids.professional,
           role: 'PROFESSIONAL_READ_ONLY',
+          professionalType: 'SOLICITOR',
+          professionalScopes: [
+            'CASE_OVERVIEW',
+            'MESSAGES',
+            'REQUESTS',
+            'AGREEMENTS',
+            'CALENDAR',
+            'HANDOVERS',
+            'EXPENSES',
+            'DOCUMENTS',
+            'AUDIT',
+            'EVIDENCE',
+          ],
         },
         {
           familyId: ids.familyA,
@@ -306,6 +324,42 @@ describe('PostgreSQL family row-level security', () => {
         }),
       ),
     ).rejects.toThrow();
+  });
+
+  it('requires the route scope to be present on professional access', async () => {
+    await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw`SELECT configure_coparent_professional_access_v2(
+        ${ids.familyA},${ids.professional},${null}::TIMESTAMPTZ,${'SOLICITOR'},${['CASE_OVERVIEW']}::TEXT[]
+      )`,
+    );
+    expect(
+      await asActor(
+        ids.professional,
+        (tx) => tx.message.findMany(),
+        'MESSAGES',
+      ),
+    ).toEqual([]);
+    await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw`SELECT configure_coparent_professional_access_v2(
+        ${ids.familyA},${ids.professional},${null}::TIMESTAMPTZ,${'SOLICITOR'},
+        ${[
+          'CASE_OVERVIEW',
+          'MESSAGES',
+          'REQUESTS',
+          'AGREEMENTS',
+          'CALENDAR',
+          'HANDOVERS',
+          'EXPENSES',
+          'DOCUMENTS',
+          'AUDIT',
+          'EVIDENCE',
+        ]}::TEXT[]
+      )`,
+    );
   });
 
   it('does not leak transaction-local identity into an unscoped query', async () => {
@@ -1208,29 +1262,54 @@ describe('PostgreSQL family row-level security', () => {
 
   it('isolates notifications, honours preferences, and protects notification identity', async () => {
     const before = await asActor(ids.charlie, (tx) => tx.notification.count());
-    await asActor(ids.alice, (tx) => tx.$queryRaw`
+    await asActor(
+      ids.alice,
+      (tx) => tx.$queryRaw`
       SELECT create_coparent_message_with_attachments(
         ${ids.notificationMessage},${ids.familyA},${'GENERAL'},${'Notification test'},
         ARRAY[]::TEXT[],ARRAY[]::TEXT[]
-      )`);
+      )`,
+    );
     const items = await asActor(ids.charlie, (tx) =>
-      tx.notification.findMany({ where: { entityId: ids.notificationMessage } }),
+      tx.notification.findMany({
+        where: { entityId: ids.notificationMessage },
+      }),
     );
     expect(items).toHaveLength(1);
-    expect(await asActor(ids.bob, (tx) => tx.notification.findMany({ where: { entityId: ids.notificationMessage } }))).toEqual([]);
-    const marked = await asActor(ids.charlie, (tx) => tx.$queryRaw<Array<{ readAt: Date | null }>>`
-      SELECT mark_coparent_notification_read(${items[0]!.id}) AS "readAt"`);
+    expect(
+      await asActor(ids.bob, (tx) =>
+        tx.notification.findMany({
+          where: { entityId: ids.notificationMessage },
+        }),
+      ),
+    ).toEqual([]);
+    const marked = await asActor(
+      ids.charlie,
+      (tx) => tx.$queryRaw<Array<{ readAt: Date | null }>>`
+      SELECT mark_coparent_notification_read(${items[0].id}) AS "readAt"`,
+    );
     expect(marked[0]?.readAt).toBeInstanceOf(Date);
-    await asActor(ids.charlie, (tx) => tx.$queryRaw`
-      SELECT set_coparent_notification_preference(${'NEW_MESSAGE'},${false},${false},${24}::INTEGER)`);
-    await asActor(ids.alice, (tx) => tx.$queryRaw`
+    await asActor(
+      ids.charlie,
+      (tx) => tx.$queryRaw`
+      SELECT set_coparent_notification_preference(${'NEW_MESSAGE'},${false},${false},${24}::INTEGER)`,
+    );
+    await asActor(
+      ids.alice,
+      (tx) => tx.$queryRaw`
       SELECT create_coparent_message_with_attachments(
         ${ids.mutedNotificationMessage},${ids.familyA},${'GENERAL'},${'Muted notification test'},
         ARRAY[]::TEXT[],ARRAY[]::TEXT[]
-      )`);
-    expect(await asActor(ids.charlie, (tx) => tx.notification.count())).toBe(before + 1);
+      )`,
+    );
+    expect(await asActor(ids.charlie, (tx) => tx.notification.count())).toBe(
+      before + 1,
+    );
     await expect(
-      admin.notification.update({ where: { id: items[0]!.id }, data: { title: 'Changed' } }),
+      admin.notification.update({
+        where: { id: items[0].id },
+        data: { title: 'Changed' },
+      }),
     ).rejects.toThrow('Notification identity is immutable');
   });
 
@@ -1284,16 +1363,20 @@ describe('PostgreSQL family row-level security', () => {
       }),
     ).rejects.toThrow('Calendar subscription identity is immutable');
 
-    const professionalRevoke = await asActor(ids.professional, (tx) =>
-      tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
+    const professionalRevoke = await asActor(
+      ids.professional,
+      (tx) =>
+        tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
         SELECT revoke_coparent_calendar_subscription(
           ${ids.calendarSubscription}, ${ids.familyA}
         ) AS "subscriptionId"`,
     );
     expect(professionalRevoke[0]?.subscriptionId).toBeNull();
 
-    const ownerRevoke = await asActor(ids.alice, (tx) =>
-      tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
+    const ownerRevoke = await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw<Array<{ subscriptionId: string | null }>>`
         SELECT revoke_coparent_calendar_subscription(
           ${ids.calendarSubscription}, ${ids.familyA}
         ) AS "subscriptionId"`,
@@ -1388,8 +1471,10 @@ describe('PostgreSQL family row-level security', () => {
       await asActor(ids.controlledProfessional, (tx) => tx.child.findMany()),
     ).toEqual([]);
 
-    const outsider = await asActor(ids.bob, (tx) =>
-      tx.$queryRaw<Array<{ userId: string | null }>>`
+    const outsider = await asActor(
+      ids.bob,
+      (tx) =>
+        tx.$queryRaw<Array<{ userId: string | null }>>`
         SELECT configure_coparent_professional_access(
           ${ids.familyA}, ${ids.controlledProfessional},
           ${new Date('2099-01-01T00:00:00Z')}::TIMESTAMPTZ
@@ -1397,8 +1482,10 @@ describe('PostgreSQL family row-level security', () => {
     );
     expect(outsider[0]?.userId).toBeNull();
 
-    const configured = await asActor(ids.alice, (tx) =>
-      tx.$queryRaw<Array<{ userId: string | null }>>`
+    const configured = await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw<Array<{ userId: string | null }>>`
         SELECT configure_coparent_professional_access(
           ${ids.familyA}, ${ids.controlledProfessional},
           ${new Date('2099-01-01T00:00:00Z')}::TIMESTAMPTZ
@@ -1425,8 +1512,10 @@ describe('PostgreSQL family row-level security', () => {
       'Professional access may change only through a controlled transition',
     );
 
-    const revoked = await asActor(ids.alice, (tx) =>
-      tx.$queryRaw<Array<{ userId: string | null }>>`
+    const revoked = await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw<Array<{ userId: string | null }>>`
         SELECT revoke_coparent_professional_access(
           ${ids.familyA}, ${ids.controlledProfessional}, ${'Review completed'}
         ) AS "userId"`,
@@ -1449,5 +1538,90 @@ describe('PostgreSQL family row-level security', () => {
         },
       }),
     ).toBe(2);
+  });
+
+  it('records immutable settlements for parents and conceals them from professionals', async () => {
+    const created = await asActor(
+      ids.alice,
+      (tx) => tx.$queryRaw<Array<{ id: string | null }>>`
+        SELECT create_coparent_settlement(
+          ${ids.settlement},${ids.familyA},${ids.charlie},${ids.alice},
+          ${2750}::INTEGER,${new Date()},${'BANK_TRANSFER'},${'September balance'},${'Paid in full'}
+        ) AS id`,
+    );
+    expect(created).toEqual([{ id: ids.settlement }]);
+    await expect(
+      admin.settlement.update({
+        where: { id: ids.settlement },
+        data: { amountMinor: 2800 },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      asActor(ids.professional, (tx) => tx.settlement.findMany()),
+    ).resolves.toEqual([]);
+  });
+
+  it('requires every active parent to approve a time-limited legal disclosure', async () => {
+    await asActor(
+      ids.alice,
+      (tx) => tx.$queryRaw`
+        SELECT create_coparent_legal_case(
+          ${ids.legalCase},${ids.familyA},${'FC-2026-001'},${'Family Court'},
+          ${'Child arrangements'},${'Test case'}
+        )`,
+    );
+    await asActor(
+      ids.alice,
+      (tx) => tx.$queryRaw`
+        SELECT create_coparent_legal_disclosure(
+          ${ids.legalDisclosure},${ids.legalCase},${ids.familyA},${'Approved chronology'},
+          ${new Date('2026-01-01T00:00:00Z')},${new Date('2026-12-31T23:59:59Z')},
+          ${['chronology']}::TEXT[],${ids.professional},${new Date(Date.now() + 86400000)},
+          ${[]}::TEXT[]
+        )`,
+    );
+    await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw`SELECT approve_coparent_legal_disclosure(${ids.legalDisclosure})`,
+    );
+    expect(
+      await admin.legalDisclosure.findUnique({
+        where: { id: ids.legalDisclosure },
+      }),
+    ).toEqual(expect.objectContaining({ status: 'AWAITING_APPROVAL' }));
+    await asActor(
+      ids.charlie,
+      (tx) =>
+        tx.$queryRaw`SELECT approve_coparent_legal_disclosure(${ids.legalDisclosure})`,
+    );
+    expect(
+      await asActor(ids.professional, (tx) =>
+        tx.legalDisclosure.findMany({ where: { id: ids.legalDisclosure } }),
+      ),
+    ).toEqual([expect.objectContaining({ status: 'APPROVED' })]);
+  });
+
+  it('hides parent-only documents until a specific expiring grant is issued', async () => {
+    await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw`SELECT set_coparent_document_visibility(${ids.document},${ids.familyA},${'EXPLICIT_GRANTS'})`,
+    );
+    await expect(
+      asActor(ids.professional, (tx) =>
+        tx.document.findMany({ where: { id: ids.document } }),
+      ),
+    ).resolves.toEqual([]);
+    await asActor(
+      ids.alice,
+      (tx) =>
+        tx.$queryRaw`SELECT grant_coparent_document_access(${ids.document},${ids.familyA},${ids.professional},${new Date(Date.now() + 86400000)})`,
+    );
+    expect(
+      await asActor(ids.professional, (tx) =>
+        tx.document.findMany({ where: { id: ids.document } }),
+      ),
+    ).toHaveLength(1);
   });
 });

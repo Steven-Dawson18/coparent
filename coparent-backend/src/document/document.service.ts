@@ -46,6 +46,7 @@ const documentSelect = {
   createdById: true,
   expenseId: true,
   createdAt: true,
+  visibility: true,
   createdBy: { select: { id: true, firstName: true, lastName: true } },
   children: {
     include: {
@@ -56,6 +57,18 @@ const documentSelect = {
   messageAttachment: { select: { messageId: true } },
   requestAttachment: { select: { requestId: true } },
   responseAttachment: { select: { responseId: true } },
+  accessGrants: {
+    select: {
+      userId: true,
+      createdAt: true,
+      expiresAt: true,
+      revokedAt: true,
+      revocationReason: true,
+      user: {
+        select: { id: true, firstName: true, lastName: true, email: true },
+      },
+    },
+  },
 } satisfies Prisma.DocumentSelect;
 
 @Injectable()
@@ -92,9 +105,17 @@ export class DocumentService {
     const id = randomUUID(),
       versionId = randomUUID();
     try {
-      const rows = await this.prisma.withActor(
-        userId,
-        (tx) => tx.$queryRaw<Array<{ documentId: string | null }>>`
+      const visibility =
+        dto.visibility ??
+        (['LEGAL', 'COURT_ORDER', 'PARENTING_AGREEMENT', 'MEDICAL'].includes(
+          dto.category,
+        )
+          ? 'PARENTS_ONLY'
+          : 'FAMILY');
+      const rows = await this.prisma.withActor(userId, async (tx) => {
+        const created = await tx.$queryRaw<
+          Array<{ documentId: string | null }>
+        >`
           SELECT create_coparent_document(
             ${id},${versionId},${familyId},${dto.expenseId ?? null},${dto.category},
             ${dto.title},${dto.description ?? null},${this.cleanFileName(file.originalname)},
@@ -102,13 +123,66 @@ export class DocumentService {
             ${encrypted.storageKey},${encrypted.initializationVector},
             ${encrypted.authenticationTag},${encrypted.encryptionKeyVersion}::INTEGER,
             ${childIds}::TEXT[]
-          ) AS "documentId"`,
-      );
+          ) AS "documentId"`;
+        if (created[0]?.documentId !== id) return created;
+        const secured = await tx.$queryRaw<
+          Array<{ documentId: string | null }>
+        >`
+          SELECT set_coparent_document_visibility(${id},${familyId},${visibility}) AS "documentId"`;
+        return secured;
+      });
       if (rows[0]?.documentId !== id) throw new NotFoundException();
     } catch (cause) {
       await this.storage.remove(encrypted.storageKey);
       throw cause;
     }
+    return this.get(userId, familyId, id);
+  }
+
+  async setVisibility(
+    userId: string,
+    familyId: string,
+    id: string,
+    visibility: string,
+  ) {
+    const rows = await this.prisma.withActor(
+      userId,
+      (tx) => tx.$queryRaw<Array<{ id: string | null }>>`
+        SELECT set_coparent_document_visibility(${id},${familyId},${visibility}) AS id`,
+    );
+    if (rows[0]?.id !== id) throw new NotFoundException();
+    return this.get(userId, familyId, id);
+  }
+
+  async grantAccess(
+    userId: string,
+    familyId: string,
+    id: string,
+    recipientId: string,
+    expiresAt: string,
+  ) {
+    const rows = await this.prisma.withActor(
+      userId,
+      (tx) => tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT grant_coparent_document_access(${id},${familyId},${recipientId},${new Date(expiresAt)}) AS "userId"`,
+    );
+    if (rows[0]?.userId !== recipientId) throw new NotFoundException();
+    return this.get(userId, familyId, id);
+  }
+
+  async revokeAccess(
+    userId: string,
+    familyId: string,
+    id: string,
+    recipientId: string,
+    reason: string,
+  ) {
+    const rows = await this.prisma.withActor(
+      userId,
+      (tx) => tx.$queryRaw<Array<{ userId: string | null }>>`
+        SELECT revoke_coparent_document_access(${id},${familyId},${recipientId},${reason}) AS "userId"`,
+    );
+    if (rows[0]?.userId !== recipientId) throw new NotFoundException();
     return this.get(userId, familyId, id);
   }
 

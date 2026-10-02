@@ -15,6 +15,7 @@ import {
   CancelRecurringExpenseDto,
   CreateExpenseDto,
   CreateRecurringExpenseDto,
+  CreateSettlementDto,
   RespondExpenseDto,
   ReviseExpenseDto,
 } from './dto/expense.dto';
@@ -75,6 +76,13 @@ export class ExpenseController {
     @Body('month') month: string,
   ) {
     return this.expenses.createStatement(r.user.userId, f, month);
+  }
+  @Post('settlements') settlement(
+    @Request() r: AuthenticatedRequest,
+    @Param('familyId') f: string,
+    @Body() d: CreateSettlementDto,
+  ) {
+    return this.expenses.createSettlement(r.user.userId, f, d);
   }
   @Post() create(
     @Request() r: AuthenticatedRequest,
